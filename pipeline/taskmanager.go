@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xpc/LIBRA/utils"
+	"github.com/0xPCDefenders/LIBRA/utils"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -73,6 +73,9 @@ func (w *Worker) Start(wg *sync.WaitGroup) {
 				// Process the job
 				fmt.Printf("Worker %d processing job %d: %v\n", w.ID, job.ID, job.DocID)
 				time.Sleep(time.Second) // Simulate work
+
+				//will produce a kafka stream from the partition array
+
 			case <-w.QuitChan:
 				// Received quit signal, terminate the worker
 				fmt.Printf("Worker %d received quit signal\n", w.ID)
@@ -200,8 +203,10 @@ func TaskManager() [][]primitive.ObjectID {
 
 	return partitionedDocIDs
 }
-
 func main() {
+	// Instead, use the Go Kafka producer
+	utils.ExampleWriter() // This will test the Kafka connection
+
 	partitionedDocIDs := TaskManager()
 	log.Println(partitionedDocIDs)
 
