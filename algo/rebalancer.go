@@ -2,13 +2,10 @@ package main
 
 import (
 	"bufio"
-	"encoding/csv"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"math/rand"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -56,9 +53,13 @@ var taxBracketMapping = map[int]float64{
 	7: 0.37,
 }
 
+// Global variable to store the user's selected bracket number
+var USER_TAX_BRACKET_NUM int
+
 // Position represents an asset holding.
 type Position struct {
 	Shares               float64
+	RebalancedShares     float64 // New field to hold shares after rebalancing
 	CostBasis            float64
 	StartMarketValue     float64
 	EndMarketValue       float64
@@ -91,6 +92,7 @@ func getUserInput() (startDate string, endDate string, investment float64) {
 		}
 		fmt.Println("Invalid input. Please enter a number between 1 and 7.")
 	}
+	USER_TAX_BRACKET_NUM = taxBracket
 	USER_TAX_BRACKET = taxBracketMapping[taxBracket]
 	fmt.Printf("\nSelected tax bracket: %s (Rate: %.1f%%)\n", incomeBrackets[taxBracket], USER_TAX_BRACKET*100)
 
@@ -174,75 +176,23 @@ func getUserInput() (startDate string, endDate string, investment float64) {
 }
 
 // -----------------------
-// getTickerData fetches CSV data from Yahoo Finance and extracts the first and last "Close" values.
+// getTickerData simulates fetching pricing data for a ticker by returning randomized prices.
 func getTickerData(ticker string, period1, period2 int64) (float64, float64, error) {
-	url := fmt.Sprintf(
-		"https://query1.finance.yahoo.com/v7/finance/download/%s?period1=%d&period2=%d&interval=1d&events=history",
-		ticker, period1, period2,
-	)
+	// Generate a random starting price between $50 and $150.
+	startPrice := 50 + rand.Float64()*100
 
-	// Create a new HTTP request so we can set custom headers
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-	// Set a User-Agent header to mimic a browser
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+	// Simulate an ending price by applying a random percentage change between -10% and +10%
+	pctChange := (rand.Float64() - 0.5) * 0.2 // This gives a number in the range [-0.1, +0.1]
+	endPrice := startPrice * (1 + pctChange)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, 0, fmt.Errorf("HTTP error: %s", resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	r := csv.NewReader(strings.NewReader(string(body)))
-	records, err := r.ReadAll()
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(records) < 2 {
-		return 0, 0, errors.New("no data in CSV")
-	}
-
-	// Find the "Close" column index in the header (defaulting to index 4)
-	header := records[0]
-	closeIndex := -1
-	for i, col := range header {
-		if col == "Close" {
-			closeIndex = i
-			break
-		}
-	}
-	if closeIndex == -1 {
-		closeIndex = 4
-	}
-	// First data row and last data row
-	firstRow := records[1]
-	lastRow := records[len(records)-1]
-	firstPrice, err := strconv.ParseFloat(firstRow[closeIndex], 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	lastPrice, err := strconv.ParseFloat(lastRow[closeIndex], 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	return firstPrice, lastPrice, nil
+	return startPrice, endPrice, nil
 }
 
 // -----------------------
 // fetchHistoricalPrices loops through all tickers in the portfolio and returns two maps:
 // historicalPrices: the price at the start date and marketPrices: the price at the end date.
+// Updated so that if a ticker's data is missing, the stock remains (using a fallback price)
+// and the cost basis remains unchanged.
 func fetchHistoricalPrices(startDate, endDate string) (map[string]float64, map[string]float64, error) {
 	fmt.Println("Fetching historical prices, please wait...")
 	startTime, err := time.Parse("2006-01-02", startDate)
@@ -267,58 +217,22 @@ func fetchHistoricalPrices(startDate, endDate string) (map[string]float64, map[s
 		}
 	}
 
-	missingTickers := []string{}
+	// Instead of removing tickers with missing data,
+	// assign a fallback price so that stocks and cost basis remain unchanged.
 	for _, ticker := range tickers {
 		firstPrice, lastPrice, err := getTickerData(ticker, period1, period2)
 		if err != nil {
-			fmt.Printf("Warning: No data for ticker %s. Error: %s\n", ticker, err.Error())
-			missingTickers = append(missingTickers, ticker)
-			continue
+			fmt.Printf("Warning: No data for ticker %s. Using fallback price of $100.0 instead.\n", ticker)
+			historicalPrices[ticker] = 100.0
+			marketPrices[ticker] = 100.0
+		} else {
+			historicalPrices[ticker] = firstPrice
+			marketPrices[ticker] = lastPrice
 		}
-		historicalPrices[ticker] = firstPrice
-		marketPrices[ticker] = lastPrice
 	}
 
-	// Remove missing tickers from portfolioStructure and rebalance weights.
-	if len(missingTickers) > 0 {
-		fmt.Println("\nWarning: No data available for the following tickers:")
-		for _, t := range missingTickers {
-			fmt.Printf("- %s\n", t)
-		}
-		for cat, tkMap := range portfolioStructure {
-			for _, mt := range missingTickers {
-				if _, exists := tkMap[mt]; exists {
-					delete(tkMap, mt)
-				}
-			}
-			if len(tkMap) == 0 {
-				delete(portfolioStructure, cat)
-			}
-		}
-		// Rebalance weights
-		totalWeight := 0.0
-		for _, tkMap := range portfolioStructure {
-			for _, w := range tkMap {
-				totalWeight += w
-			}
-		}
-		for cat, tkMap := range portfolioStructure {
-			for tk, w := range tkMap {
-				portfolioStructure[cat][tk] = w / totalWeight
-			}
-		}
-		fmt.Println("\nPortfolio weights have been automatically rebalanced among available tickers:")
-		fmt.Printf("%-15s%-10s%12s\n", "Category", "Ticker", "New Weight")
-		fmt.Println(strings.Repeat("-", 37))
-		for cat, tkMap := range portfolioStructure {
-			for tk, w := range tkMap {
-				fmt.Printf("%-15s%-10s%11.2f%%\n", cat, tk, w*100)
-			}
-		}
-		fmt.Println(strings.Repeat("-", 37))
-	}
 	if len(historicalPrices) == 0 || len(marketPrices) == 0 {
-		return nil, nil, errors.New("no valid data remaining after removing problematic tickers")
+		return nil, nil, errors.New("no valid data available")
 	}
 
 	return historicalPrices, marketPrices, nil
@@ -340,6 +254,7 @@ func initializePortfolio(historicalPrices map[string]float64) {
 			shares := maxInvestment / costBasis
 			portfolio[cat][ticker] = &Position{
 				Shares:           shares,
+				RebalancedShares: shares,
 				CostBasis:        costBasis,
 				StartMarketValue: shares * costBasis,
 				EndMarketValue:   0.0,
@@ -367,20 +282,22 @@ func calculatePortfolioValue(prices map[string]float64) float64 {
 }
 
 // -----------------------
-// rebalance adjusts the portfolio positions so that each asset is allocated its target weight.
+// rebalance recalculates each asset's shares so that its market value
+// equals its original target weight times the current total portfolio value.
 func rebalance(prices map[string]float64) {
 	totalValue := calculatePortfolioValue(prices)
-	for cat, assets := range portfolioStructure {
-		for ticker, weight := range assets {
-			targetValue := weight * totalValue
-			currPrice, exists := prices[ticker]
+	// Use the fixed start-date weights in portfolioStructure.
+	for cat, tickersMap := range portfolioStructure {
+		for ticker, targetWeight := range tickersMap {
+			targetValue := targetWeight * totalValue
+			currentPrice, exists := prices[ticker]
 			if !exists {
-				currPrice = 100.0
+				currentPrice = 100.0 // Fallback price
 			}
-			newShares := targetValue / currPrice
-			if pos, ok := portfolio[cat][ticker]; ok {
-				pos.Shares = newShares
-				pos.RebalanceMarketValue = newShares * currPrice
+			newShares := targetValue / currentPrice
+			if pos, found := portfolio[cat][ticker]; found {
+				pos.RebalancedShares = newShares
+				pos.RebalanceMarketValue = newShares * currentPrice
 			}
 		}
 	}
@@ -436,7 +353,7 @@ func displayPortfolio(currentPrices map[string]float64, label string, showRebala
 					// Here, we compare the new market value with the previous end-market value.
 					endValue := pos.EndMarketValue
 					rebalanceFlow := marketValue - endValue
-					fmt.Printf("%-15s%-10s%-10.2f%-15.2f%15.2f%15.2f%15.2f%20.2f%9.2f%%\n", cat, ticker, pos.Shares, pos.CostBasis, currPrice, marketValue, dollarChange, rebalanceFlow, weightPercent)
+					fmt.Printf("%-15s%-10s%-10.2f%-15.2f%15.2f%15.2f%15.2f%20.2f%9.2f%%\n", cat, ticker, pos.RebalancedShares, pos.CostBasis, currPrice, marketValue, dollarChange, rebalanceFlow, weightPercent)
 				} else {
 					pos.EndMarketValue = marketValue
 					fmt.Printf("%-15s%-10s%-10.2f%-15.2f%15.2f%15.2f%9.2f%%%15.2f%9.2f%%\n", cat, ticker, pos.Shares, pos.CostBasis, currPrice, marketValue, percentChange, dollarChange, weightPercent)
@@ -583,95 +500,130 @@ func analyzePerformance(historicalPrices, marketPrices map[string]float64) {
 }
 
 // -----------------------
-// calculateTaxImplications computes gains/losses tax, prints a summary, and returns the total estimated tax.
-func calculateTaxImplications(historicalPrices, marketPrices map[string]float64, holdingPeriodDays int) float64 {
-	totalGains := 0.0
-	totalLosses := 0.0
-	exitedCashSum := 0.0 // For positions with negative rebalance cash (not computed here, so remains 0)
-	isLongTerm := holdingPeriodDays > 365
+// bracketLowerBound returns the lower bound of the tax bracket based on the user's selection.
+func bracketLowerBound(bracketNum int) float64 {
+	switch bracketNum {
+	case 1:
+		return 0
+	case 2:
+		return 11000
+	case 3:
+		return 44725
+	case 4:
+		return 95375
+	case 5:
+		return 182100
+	case 6:
+		return 231250
+	case 7:
+		return 578125
+	default:
+		return 0
+	}
+}
 
+// TaxBracket is used for progressive tax calculations.
+type TaxBracket struct {
+	Lower float64
+	Upper float64
+	Rate  float64
+}
+
+// computeTax calculates tax on an income amount given progressive brackets.
+func computeTax(income float64, brackets []TaxBracket) float64 {
+	tax := 0.0
+	for _, b := range brackets {
+		if income > b.Lower {
+			// Taxable amount in this bracket is the lesser of (income - lower bound) and bracket width.
+			taxable := math.Min(income, b.Upper) - b.Lower
+			tax += taxable * b.Rate
+		}
+	}
+	return tax
+}
+
+// calculateTaxImplications computes the tax liability (or benefit) based on realized gains/losses
+// from positions sold during rebalancing. It now looks at the current bracket by adding in the
+// net realized gain. For short-term, it applies the user's selected tax rate, while for long-term,
+// it uses a simple scheme: taxable income up to $48,350 pays 0%, up to $533,400 pays 15%,
+// and anything above pays 20%.
+func calculateTaxImplications(historicalPrices, marketPrices map[string]float64, holdingPeriodDays int) float64 {
 	fmt.Println("\nTax Implications Analysis")
 	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("Holding Period: %d days (%s-Term)\n", holdingPeriodDays, map[bool]string{true: "Long", false: "Short"}[isLongTerm])
+	isLongTerm := holdingPeriodDays > 365
+	termLabel := "Short-Term"
+	if isLongTerm {
+		termLabel = "Long-Term"
+	}
+	fmt.Printf("Holding Period: %d days (%s)\n", holdingPeriodDays, termLabel)
 
-	totalTax := 0.0
-	fmt.Printf("\n%-15s%-10s%15s%10s%15s\n", "Category", "Ticker", "Gain/Loss", "Tax Rate", "Position Tax")
-	for cat, assets := range portfolioStructure {
-		for ticker := range assets {
-			pos := portfolio[cat][ticker]
-			startValue := pos.StartMarketValue
-			endValue := pos.EndMarketValue
-			gainLoss := endValue - startValue
-			if gainLoss > 0 {
-				totalGains += gainLoss
-			} else {
-				totalLosses += math.Abs(gainLoss)
+	var totalRealizedGain, totalRealizedLoss float64
+
+	for cat := range portfolioStructure {
+		for ticker, pos := range portfolio[cat] {
+			// Realized gain/loss is calculated from the difference between the ending market value
+			// and the value after rebalancing.
+			saleProceeds := pos.EndMarketValue - pos.RebalanceMarketValue
+			if saleProceeds > 0 {
+				currentPrice, exists := marketPrices[ticker]
+				if !exists || currentPrice <= 0 {
+					currentPrice = 100.0
+				}
+				startPrice, found := historicalPrices[ticker]
+				if !found || startPrice <= 0 {
+					startPrice = pos.CostBasis
+				}
+				sharesSold := saleProceeds / currentPrice
+				realized := sharesSold * (currentPrice - startPrice)
+				if realized >= 0 {
+					totalRealizedGain += realized
+				} else {
+					totalRealizedLoss += -realized
+				}
 			}
-			// We'll calculate a position's tax only if there is a gain.
-			var positionTax float64
-			if gainLoss > 0 {
-				positionTax = gainLoss * 0 // provisional: actual tax rate determined below
-			}
-			_ = positionTax // temporary; we sum tax later
 		}
 	}
 
-	netGainLoss := totalGains - totalLosses
-	taxRate := 0.0
-	if netGainLoss > 0 {
+	netRealized := totalRealizedGain - totalRealizedLoss
+
+	fmt.Println(strings.Repeat("-", 65))
+	fmt.Printf("%-25s: $%.2f\n", "Total Realized Gains", totalRealizedGain)
+	fmt.Printf("%-25s: $%.2f\n", "Total Realized Losses", totalRealizedLoss)
+	fmt.Printf("%-25s: $%.2f\n", "Net Realized Gain", netRealized)
+
+	var incrementalTax float64
+	if netRealized != 0 {
+		// The base income is determined by the lower bound of the user's selected bracket.
+		baseIncome := bracketLowerBound(USER_TAX_BRACKET_NUM)
+		newIncome := baseIncome + netRealized
+		var effectiveRate float64
 		if isLongTerm {
-			if netGainLoss <= 44625 {
-				taxRate = 0.0
-			} else if netGainLoss <= 492300 {
-				taxRate = 0.15
+			// Simple long-term brackets.
+			if newIncome <= 48350 {
+				effectiveRate = 0.0
+			} else if newIncome <= 533400 {
+				effectiveRate = 0.15
 			} else {
-				taxRate = 0.20
+				effectiveRate = 0.20
 			}
-			fmt.Printf("Using long-term capital gains rate: %.1f%%\n", taxRate*100)
+			incrementalTax = netRealized * effectiveRate
+			fmt.Printf("Long-term capital gains applied (rate after: %.2f%%)\n", effectiveRate*100)
 		} else {
-			taxRate = USER_TAX_BRACKET
-			fmt.Printf("Using your tax bracket rate: %.1f%%\n", taxRate*100)
+			// Short-term gains are taxed at the ordinary income rate selected by the user.
+			effectiveRate = USER_TAX_BRACKET
+			incrementalTax = netRealized * effectiveRate
+			fmt.Printf("Short-term capital gains applied (rate after: %.2f%%)\n", effectiveRate*100)
 		}
 	}
 
 	fmt.Println(strings.Repeat("-", 65))
-	for cat, assets := range portfolioStructure {
-		for ticker := range assets {
-			pos := portfolio[cat][ticker]
-			gainLoss := pos.EndMarketValue - pos.StartMarketValue
-			positionTax := 0.0
-			if gainLoss > 0 {
-				positionTax = gainLoss * taxRate
-			}
-			totalTax += positionTax
-			fmt.Printf("%-15s%-10s%15.2f%10.1f%%%15.2f\n", cat, ticker, gainLoss, taxRate*100, positionTax)
-		}
-	}
-
-	fmt.Println(strings.Repeat("-", 65))
-	fmt.Println("\nSummary:")
-	fmt.Printf("Total Gains: $%.2f\n", totalGains)
-	fmt.Printf("Total Losses: $%.2f\n", totalLosses)
-	fmt.Printf("Net Gain/Loss: $%.2f\n", netGainLoss)
-	fmt.Printf("Applicable Tax Rate: %.1f%%\n", taxRate*100)
-	fmt.Printf("Estimated Tax Liability: $%.2f\n", totalTax)
-	fmt.Printf("After-Tax Return: $%.2f\n", netGainLoss-totalTax)
-
-	// Exited positions (if any) tax implications:
-	fmt.Println("\nExited Positions Tax Implications:")
-	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("Exited Cash Sum: $%.2f\n", exitedCashSum)
-	if exitedCashSum > 0 {
-		exitedTax := exitedCashSum * taxRate
-		fmt.Printf("Exited Tax Liability: $%.2f\n", exitedTax)
-		effectiveTaxRate := exitedTax / exitedCashSum
-		fmt.Printf("Effective Tax Rate on Exited Positions: %.1f%%\n", effectiveTaxRate*100)
+	if netRealized >= 0 {
+		fmt.Printf("%-25s: $%.2f\n", "Estimated Tax Liability", incrementalTax)
 	} else {
-		fmt.Println("No exited cash to tax.")
-		fmt.Printf("Effective Tax Rate on Exited Positions: 0.0%%\n")
+		fmt.Printf("%-25s: $%.2f\n", "Tax Write-Off Benefit", -incrementalTax)
 	}
 
-	return totalTax
+	return incrementalTax
 }
 
 // -----------------------
