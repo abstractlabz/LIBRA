@@ -3,57 +3,73 @@ package utils
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
+	"os"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/plain"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func ExampleWriter() {
-	// SASL credentials: these come from your Confluent Cloud cluster.
-	saslMechanism := plain.Mechanism{
-		Username: "CL6JWUSO4GMZZ4RF",
-		Password: "cxRWjlLx00pHKpt5Rs0BRMHYTmbq3zyMTHG3sPl5CAQJQsHvtnzz1kb/tsNH9d/I",
+// ProduceDocument produces a Kafka message where the key is the document ID
+// (converted to a hex string) and the value is the entire document in JSON format.
+func ProduceDocument(docID primitive.ObjectID, doc bson.M) {
+	// Marshal the document into JSON.
+	jsonData, err := json.Marshal(doc)
+	if err != nil {
+		log.Printf("Error marshalling document for id %s: %v\n", docID.Hex(), err)
+		return
 	}
 
-	// Create a TLS config. In many cases, a basic config is enough.
-	// If you're doing mutual TLS or custom certs, you'll need more setup.
+	// Set up the SASL mechanism using environment variables.
+	saslMechanism := plain.Mechanism{
+		Username: os.Getenv("KAFKA_KEY"),
+		Password: os.Getenv("KAFKA_SECRET"),
+	}
+
+	// Set up TLS configuration.
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
 
-	// Create a dialer that uses SASL/PLAIN over TLS.
+	// Create a dialer that supports SASL/PLAIN over TLS.
 	dialer := &kafka.Dialer{
 		SASLMechanism: saslMechanism,
 		TLS:           tlsConfig,
 	}
 
-	// Connect specifically to the leader for partition 0 of the topic.
+	// Retrieve the Kafka bootstrap server from the environment.
+	kafkaBroker := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+
+	// Connect to the Kafka leader for topic "alert_normalize" on a random partition.
 	conn, err := dialer.DialLeader(
 		context.Background(),
 		"tcp",
-		"pkc-921jm.us-east-2.aws.confluent.cloud:9092",
-		"alert_normalize",
-		0,
+		kafkaBroker,
+		"topic_2",
+		rand.Intn(5), // Randomly select a partition.
 	)
 	if err != nil {
-		log.Printf("Error connecting to Kafka: %v", err)
+		log.Printf("Error connecting to Kafka: %v\n", err)
 		return
 	}
-	defer conn.Close() // important to close!
+	defer conn.Close()
 
-	// Write a test message
-	_, err = conn.WriteMessages(
-		kafka.Message{
-			Key:   []byte("hello"),
-			Value: []byte("world"),
-		},
-	)
-	if err != nil {
-		log.Printf("Error writing message to Kafka: %v", err)
+	// Create the Kafka message with the document ID as key and the JSON document as value.
+	msg := kafka.Message{
+		Key:   []byte(docID.Hex()),
+		Value: []byte(jsonData),
+	}
+
+	// Write the message to Kafka.
+	if _, err := conn.WriteMessages(msg); err != nil {
+		log.Printf("Error writing message to Kafka for docID %s: %v\n", docID.Hex(), err)
 		return
 	}
 
-	fmt.Println("Message written successfully to Kafka.")
+	fmt.Printf("Message written successfully for docID %s to Kafka.\n", docID.Hex())
 }
