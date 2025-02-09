@@ -1,23 +1,86 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
+	"github.com/0xPCDefenders/LIBRA/models"
 	"github.com/0xPCDefenders/LIBRA/utils"
 	"github.com/segmentio/kafka-go"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// Assuming you have corresponding functions for each broker type
+func processETRADE(docID primitive.ObjectID, doc bson.M) error {
+	// Implement ETRADE-specific processing logic here
+	utils.ProduceDocument(docID, doc, "alert_etrade")
+	return nil
+}
+
+func processSCHWAB(docID primitive.ObjectID, doc bson.M) error {
+	// Implement SCHWAB-specific processing logic here
+	utils.ProduceDocument(docID, doc, "alert_schwab")
+	return nil
+}
+
+func processROBINHOOD(docID primitive.ObjectID, doc bson.M) error {
+	// Implement ROBINHOOD-specific processing logic here
+	// call a Kafka producer to send a message to the Kafka topic alert_robinhood
+	utils.ProduceDocument(docID, doc, "alert_robinhood")
+	return nil
+}
+
+func processMANUAL(docID primitive.ObjectID, doc bson.M) error {
+	// Implement MANUAL-specific processing logic here
+	utils.ProduceDocument(docID, doc, "alert_manual")
+	return nil
+}
 
 // processMessage represents the actual normalization work.
 // For now, it just prints the message but returns an error if needed.
 func processMessage(msg kafka.Message) error {
-	// Simulate processing: replace with actual normalization logic.
+	// Log the incoming message
 	fmt.Printf("Processing message: topic=%s, partition=%d, offset=%d, key=%s, value=%s\n",
 		msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
-	// TODO: Add actual normalization logic here.
-	//Convert the value from msg.Value into a json and
-	return nil
+
+	// Parse the message value as JSON into the Portfolio struct
+	var m models.Portfolio
+	if err := json.Unmarshal(msg.Value, &m); err != nil {
+		return fmt.Errorf("failed to unmarshal message value: %v", err)
+	}
+
+	// Validate required fields
+	if m.Policy.UserName == "" || m.Policy.UserPass == "" {
+		return fmt.Errorf("missing required fields in message")
+	}
+
+	// Convert m to bson.M
+	docBytes, err := bson.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %v", err)
+	}
+	var doc bson.M
+	if err := bson.Unmarshal(docBytes, &doc); err != nil {
+		return fmt.Errorf("failed to unmarshal message to bson.M: %v", err)
+	}
+
+	// Instead of extracting brokerType from doc (as a string), use the parsed value in the struct.
+	brokerType := m.Policy.BrokerType.String()
+	switch brokerType {
+	case "ETRADE":
+		return processETRADE(m.ID, doc)
+	case "SCHWAB":
+		return processSCHWAB(m.ID, doc)
+	case "ROBINHOOD":
+		return processROBINHOOD(m.ID, doc)
+	case "MANUAL":
+		return processMANUAL(m.ID, doc)
+	default:
+		return fmt.Errorf("unknown broker type: %s", brokerType)
+	}
 }
 
 // worker continuously reads messages from the buffer channel and processes them.
@@ -43,8 +106,6 @@ func worker(id int, buffer <-chan kafka.Message) {
 			}()
 			// If no panic occurred, break out of the retry loop.
 			retryCount++
-			// If we reached here without a panic, assume processing was successful.
-			// (In a more complex system, you might check a flag.)
 			break
 		}
 		// If a message fails repeatedly, you might decide to log it and drop it after some retries.
@@ -59,7 +120,7 @@ func main() {
 	buffer := make(chan kafka.Message, 100)
 
 	// Start the consumer in a goroutine (this uses your updated reader code in utils).
-	go utils.ConsumeToBuffer(buffer)
+	go utils.ConsumeToBuffer(buffer, "alert_normalize", "data-normalization-group", "../../.env")
 
 	// Set up a ticker to print the current buffer size every 5 seconds.
 	ticker := time.NewTicker(5 * time.Second)

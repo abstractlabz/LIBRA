@@ -73,7 +73,7 @@ func (w *Worker) Start(wg *sync.WaitGroup) {
 				fmt.Printf("Worker %d processing job %d with %d documents\n", w.ID, job.ID, len(job.Docs))
 				for _, doc := range job.Docs {
 					// Instead of fetching the document here, we already have it.
-					utils.ProduceDocument(doc["_id"].(primitive.ObjectID), doc)
+					utils.ProduceDocument(doc["_id"].(primitive.ObjectID), doc, "alert_normalize")
 				}
 
 			case <-w.QuitChan:

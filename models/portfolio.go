@@ -1,6 +1,8 @@
 package models
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -8,7 +10,7 @@ import (
 
 // Portfolio represents an actual portfolio snapshot along with the user's policy.
 type Portfolio struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
 	UserID      string             `bson:"userId" json:"userId"`
 	Name        string             `bson:"name" json:"name"`
 	Holdings    []Holding          `bson:"holdings" json:"holdings"`
@@ -73,14 +75,56 @@ func (bt BrokerType) String() string {
 	}
 }
 
+func (bt *BrokerType) UnmarshalJSON(data []byte) error {
+	// First, try to parse data as a string.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		switch s {
+		case "ETRADE":
+			*bt = ETRADE
+		case "SCHWAB":
+			*bt = SCHWAB
+		case "ROBINHOOD":
+			*bt = ROBINHOOD
+		case "MANUAL":
+			*bt = MANUAL
+		default:
+			return fmt.Errorf("unknown broker type: %s", s)
+		}
+		return nil
+	}
+
+	// Next, try to parse data as a number.
+	var n float64
+	if err := json.Unmarshal(data, &n); err == nil {
+		switch int(n) {
+		case int(ETRADE):
+			*bt = ETRADE
+		case int(SCHWAB):
+			*bt = SCHWAB
+		case int(ROBINHOOD):
+			*bt = ROBINHOOD
+		case int(MANUAL):
+			*bt = MANUAL
+		default:
+			return fmt.Errorf("unknown broker type: %d", int(n))
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unknown broker type: %v", data)
+}
+
 // UserPolicy represents the user's portfolio management preferences.
 type UserPolicy struct {
 	UserID             string            `bson:"userId" json:"userId"`
 	RiskTolerance      float64           `bson:"riskTolerance" json:"riskTolerance"`           // e.g., 0.0 (low) to 1.0 (high)
 	InvestmentHorizon  InvestmentHorizon `bson:"investmentHorizon" json:"investmentHorizon"`   // ShortTerm, MediumTerm, or LongTerm
-	BrokerType         BrokerType        `bson:"brokerType" json:"brokerType"`                 // New field for BrokerType
+	BrokerType         BrokerType        `bson:"brokerType" json:"brokerType"`                 // Broker type as a custom enum (with custom unmarshal logic)
 	TargetAllocation   TargetPortfolio   `bson:"targetAllocation" json:"targetAllocation"`     // The desired portfolio allocation
 	RebalanceFrequency string            `bson:"rebalanceFrequency" json:"rebalanceFrequency"` // e.g., "monthly", "quarterly"
+	UserName           string            `bson:"userName" json:"userName"`
+	UserPass           string            `bson:"userPass" json:"userPass"`
 }
 
 // TargetPortfolio represents the desired asset allocation.

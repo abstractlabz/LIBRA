@@ -13,10 +13,11 @@ import (
 )
 
 // ConsumeToBuffer reads messages from Kafka and sends them into the provided buffer channel.
-func ConsumeToBuffer(buffer chan kafka.Message) {
+func ConsumeToBuffer(buffer chan kafka.Message, topic string, groupID string, envPath string) {
 	// Load environment variables from the .env file.
-	err := godotenv.Load("../../.env")
+	err := godotenv.Load(envPath)
 	if err != nil {
+
 		log.Printf("Error loading .env file: %v", err)
 		return
 	}
@@ -48,11 +49,12 @@ func ConsumeToBuffer(buffer chan kafka.Message) {
 
 	// Create a new Kafka reader with a GroupID and a short commit interval.
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        []string{"pkc-p11xm.us-east-1.aws.confluent.cloud:9092"},
-		Topic:          "topic_2",
-		GroupID:        "data-normalization-group", // Added group ID for offset management.
-		MaxBytes:       10e6,                       // 10MB
-		CommitInterval: 1 * time.Second,            // Auto-commit offsets every 1 second.
+		Brokers:  []string{os.Getenv("KAFKA_BOOTSTRAP_SERVERS")},
+		Topic:    topic,
+		GroupID:  groupID, // Added group ID for offset management.
+		MaxBytes: 10e6,    // 10MB
+
+		CommitInterval: 1 * time.Second, // Auto-commit offsets every 1 second.
 		Dialer:         dialer,
 	})
 
@@ -60,7 +62,7 @@ func ConsumeToBuffer(buffer chan kafka.Message) {
 	for {
 		m, err := r.ReadMessage(context.Background())
 		if err != nil {
-			log.Printf("Error reading message: %v", err)
+			log.Printf("Error reading message from topic %s: %v", topic, err)
 			// Continue reading even if one message errors.
 			continue
 		}

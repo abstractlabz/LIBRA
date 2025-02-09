@@ -17,7 +17,7 @@ import (
 
 // ProduceDocument produces a Kafka message where the key is the document ID
 // (converted to a hex string) and the value is the entire document in JSON format.
-func ProduceDocument(docID primitive.ObjectID, doc bson.M) {
+func ProduceDocument(docID primitive.ObjectID, doc bson.M, topic string) {
 	// Marshal the document into JSON.
 	jsonData, err := json.Marshal(doc)
 	if err != nil {
@@ -50,8 +50,9 @@ func ProduceDocument(docID primitive.ObjectID, doc bson.M) {
 		context.Background(),
 		"tcp",
 		kafkaBroker,
-		"topic_2",
+		topic,
 		rand.Intn(5), // Randomly select a partition.
+
 	)
 	if err != nil {
 		log.Printf("Error connecting to Kafka: %v\n", err)
