@@ -7,6 +7,8 @@ import pyotp
 import logging
 from confluent_kafka import Consumer, Producer
 from dotenv import load_dotenv
+import base64
+from cryptography.fernet import Fernet, InvalidToken
 
 # Configure logging: you can change the level to DEBUG to see more details.
 logging.basicConfig(level=logging.DEBUG,
@@ -60,6 +62,48 @@ def convert_robinhood_positions_to_portfolio(positions_data, base_portfolio):
     }
     return portfolio_obj
 
+def decrypt_password(encrypted_password):
+    """
+    Decrypt the encrypted password using Fernet symmetric encryption.
+    
+    Args:
+        encrypted_password (str): The encrypted password string (base64-encoded)
+        
+    Returns:
+        str: The decrypted password or None if decryption fails
+    """
+    try:
+        # Get encryption key from environment variable
+        encryption_key = os.getenv("PASSWORD_ENCRYPTION_KEY")
+        if not encryption_key:
+            logging.error("Password encryption key not found in environment variables")
+            return None
+        
+        # Ensure the key is properly formatted for Fernet (32 url-safe base64-encoded bytes)
+        # If your key is not already in the correct format, you may need to pad/process it
+        if len(encryption_key) != 44 or not encryption_key.endswith('='):
+            # Generate a URL-safe base64-encoded 32-byte key from the provided key
+            key_bytes = encryption_key.encode('utf-8')
+            encryption_key = base64.urlsafe_b64encode(key_bytes.ljust(32)[:32]).decode('utf-8')
+        
+        # Create a Fernet cipher with the key
+        cipher = Fernet(encryption_key.encode('utf-8'))
+        
+        # Decrypt the password
+        # If the encrypted password is a string, encode it first
+        if isinstance(encrypted_password, str):
+            encrypted_password = encrypted_password.encode('utf-8')
+            
+        decrypted_password = cipher.decrypt(encrypted_password).decode('utf-8')
+        return decrypted_password
+        
+    except InvalidToken:
+        logging.error("Password decryption failed: Invalid token or incorrect key")
+        return None
+    except Exception as e:
+        logging.exception("Password decryption failed: %s", e)
+        return None
+
 def run_robinhood_operations(message):
     """
     Process an incoming message to log into Robinhood, retrieve positions data,
@@ -82,9 +126,15 @@ def run_robinhood_operations(message):
 
         # Extract credentials.
         user_name = policy.get("userName")
-        user_pass = policy.get("userPass")
-        if not user_name or not user_pass:
+        encrypted_user_pass = policy.get("userPass")
+        if not user_name or not encrypted_user_pass:
             logging.error("User credentials are missing in the policy: %s", policy)
+            return
+            
+        # Decrypt the password
+        user_pass = decrypt_password(encrypted_user_pass)
+        if not user_pass:
+            logging.error("Password decryption failed for user: %s", user_name)
             return
 
         login = r.login(username=user_name,
