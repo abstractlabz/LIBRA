@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -112,6 +113,31 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
+	// Next, try to parse data as a number in the format {"$numberInt": "3"}.
+	var mongoDoc map[string]interface{}
+	if err := json.Unmarshal(data, &mongoDoc); err == nil {
+		if numInt, ok := mongoDoc["$numberInt"]; ok {
+			if strVal, ok := numInt.(string); ok {
+				if val, err := strconv.Atoi(strVal); err == nil {
+					switch val {
+					case int(ETRADE):
+						*bt = ETRADE
+					case int(SCHWAB):
+						*bt = SCHWAB
+					case int(ROBINHOOD):
+						*bt = ROBINHOOD
+					case int(MANUAL):
+						*bt = MANUAL
+					default:
+						return fmt.Errorf("unknown broker type: %d", val)
+					}
+					return nil
+				}
+			}
+		}
+		return nil
+	}
+
 	return fmt.Errorf("unknown broker type: %v", data)
 }
 
@@ -123,8 +149,7 @@ type UserPolicy struct {
 	BrokerType         BrokerType        `bson:"brokerType" json:"brokerType"`                 // Broker type as a custom enum (with custom unmarshal logic)
 	TargetAllocation   TargetPortfolio   `bson:"targetAllocation" json:"targetAllocation"`     // The desired portfolio allocation
 	RebalanceFrequency string            `bson:"rebalanceFrequency" json:"rebalanceFrequency"` // e.g., "monthly", "quarterly"
-	UserName           string            `bson:"userName" json:"userName"`
-	UserPass           string            `bson:"userPass" json:"userPass"`
+
 }
 
 // TargetPortfolio represents the desired asset allocation.

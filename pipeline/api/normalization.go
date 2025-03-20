@@ -4,14 +4,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
-	"github.com/0xPCDefenders/LIBRA/models"
 	"github.com/0xPCDefenders/LIBRA/utils"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// Update your struct to handle MongoDB extended JSON format
+type BrokerType struct {
+	NumberInt string `json:"$numberInt,omitempty"`
+}
+
+// Then in your main struct that contains broker type
+type Policy struct {
+	BrokerType        BrokerType `json:"brokerType"`
+	InvestmentHorizon struct {
+		NumberInt string `json:"$numberInt,omitempty"`
+	} `json:"investmentHorizon"`
+	// ... other fields ...
+}
+
+type NumberInt struct {
+	Value string `json:"$numberInt"`
+}
 
 // Assuming you have corresponding functions for each broker type
 func processETRADE(docID primitive.ObjectID, doc bson.M) error {
@@ -26,16 +44,9 @@ func processSCHWAB(docID primitive.ObjectID, doc bson.M) error {
 	return nil
 }
 
-func processROBINHOOD(docID primitive.ObjectID, doc bson.M) error {
-	// Implement ROBINHOOD-specific processing logic here
-	// call a Kafka producer to send a message to the Kafka topic alert_robinhood
-	utils.ProduceDocument(docID, doc, "alert_robinhood")
-	return nil
-}
-
-func processMANUAL(docID primitive.ObjectID, doc bson.M) error {
-	// Implement MANUAL-specific processing logic here
-	utils.ProduceDocument(docID, doc, "alert_manual")
+func processCOINBASE(docID primitive.ObjectID, doc bson.M) error {
+	// Implement COINBASE-specific processing logic here
+	utils.ProduceDocument(docID, doc, "alert_coinbase")
 	return nil
 }
 
@@ -46,38 +57,89 @@ func processMessage(msg kafka.Message) error {
 	fmt.Printf("Processing message: topic=%s, partition=%d, offset=%d, key=%s, value=%s\n",
 		msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
 
-	// Parse the message value as JSON into the Portfolio struct
-	var m models.Portfolio
-	if err := json.Unmarshal(msg.Value, &m); err != nil {
+	// First step: unmarshal directly into a map to handle MongoDB extended JSON properly
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(msg.Value, &rawMap); err != nil {
 		return fmt.Errorf("failed to unmarshal message value: %v", err)
 	}
 
-	// Validate required fields
-	if m.Policy.UserName == "" || m.Policy.UserPass == "" {
-		return fmt.Errorf("missing required fields in message")
+	// Convert rawMap to bson.M
+	docBytes, err := bson.Marshal(rawMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message to BSON: %v", err)
 	}
 
-	// Convert m to bson.M
-	docBytes, err := bson.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
-	}
 	var doc bson.M
 	if err := bson.Unmarshal(docBytes, &doc); err != nil {
-		return fmt.Errorf("failed to unmarshal message to bson.M: %v", err)
+		return fmt.Errorf("failed to unmarshal to bson.M: %v", err)
 	}
 
-	// Instead of extracting brokerType from doc (as a string), use the parsed value in the struct.
-	brokerType := m.Policy.BrokerType.String()
+	// Extract brokerType from the policy
+	policy, ok := doc["policy"].(bson.M)
+	if !ok {
+		return fmt.Errorf("policy field not found or invalid format")
+	}
+
+	// Here's the key change: MongoDB extended JSON should come through as a proper BSON type now
+	var brokerType string
+	var brokerTypeInt int
+
+	// Handle different possible formats of brokerType in the document
+	switch bt := policy["brokerType"].(type) {
+	case int32:
+		brokerTypeInt = int(bt)
+	case int64:
+		brokerTypeInt = int(bt)
+	case float64:
+		brokerTypeInt = int(bt)
+	case bson.M:
+		// Handle extended JSON format
+		if numStr, ok := bt["$numberInt"].(string); ok {
+			var convErr error
+			brokerTypeInt, convErr = strconv.Atoi(numStr)
+			if convErr != nil {
+				return fmt.Errorf("invalid broker type number: %v", convErr)
+			}
+		} else {
+			return fmt.Errorf("invalid broker type format: %v", bt)
+		}
+	default:
+		return fmt.Errorf("unknown broker type format: %T %v", policy["brokerType"], policy["brokerType"])
+	}
+
+	// Map numeric values to broker type strings
+	switch brokerTypeInt {
+	case 1:
+		brokerType = "ETRADE"
+	case 2:
+		brokerType = "ROBINHOOD"
+	case 3:
+		brokerType = "SCHWAB"
+	case 4:
+		brokerType = "MANUAL"
+	default:
+		return fmt.Errorf("unknown broker type code: %d", brokerTypeInt)
+	}
+
+	// Extract ID from the document
+	idHex, ok := rawMap["_id"].(string)
+	if !ok {
+		return fmt.Errorf("_id field not found or invalid format")
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(idHex)
+	if err != nil {
+		return fmt.Errorf("invalid _id format: %v", err)
+	}
+
+	// Use the extracted broker type for processing
 	switch brokerType {
 	case "ETRADE":
-		return processETRADE(m.ID, doc)
+		return processETRADE(objectID, doc)
 	case "SCHWAB":
-		return processSCHWAB(m.ID, doc)
-	case "ROBINHOOD":
-		return processROBINHOOD(m.ID, doc)
-	case "MANUAL":
-		return processMANUAL(m.ID, doc)
+		return processSCHWAB(objectID, doc)
+	case "COINBASE":
+		return processCOINBASE(objectID, doc)
 	default:
 		return fmt.Errorf("unknown broker type: %s", brokerType)
 	}

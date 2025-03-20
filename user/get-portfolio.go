@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -118,7 +119,13 @@ func main() {
 	defer cancel()
 
 	var err error
-	mongoClient, err = mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
+	// Connect to MongoDB
+
+	mongoURI, err := godotenv.Read(".env")
+	if err != nil {
+		log.Fatalf("Error loading .env file: %v", err)
+	}
+	mongoClient, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI["MONGO_URI"]))
 	if err != nil {
 		log.Fatalf("Error connecting to MongoDB: %v", err)
 	}
@@ -152,14 +159,14 @@ func getPortfolioHandler(c *gin.Context) {
 	}
 
 	// Access the "integrations" collection within the "Portfolios" database.
-	collection := mongoClient.Database("Portfolios").Collection("integrations")
+	collection := mongoClient.Database("Integrations").Collection("Portfolios")
 
 	// Set up a context with a timeout for the MongoDB operation.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Create the filter to match the document with a user_id equal to idHash.
-	filter := bson.M{"user_id": idHash}
+	filter := bson.M{"userId": idHash}
 
 	// Define a result holder - using a generic map since the structure is unspecified.
 	var portfolio bson.M

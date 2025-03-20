@@ -2,3 +2,7 @@
 LIBRA.zip
 output.txt
 test.py
+user/server.crt
+user/server.key
+pipeline/api/server.crt
+pipeline/api/server.key
