@@ -74,3 +74,53 @@ func ProduceDocument(docID primitive.ObjectID, doc bson.M, topic string) {
 
 	fmt.Printf("Message written successfully for docID %s to Kafka.\n", docID.Hex())
 }
+
+// ProduceMessage sends a string message to the specified Kafka topic
+func ProduceMessage(message string, topic string) error {
+	// Set up the SASL mechanism using hardcoded credentials
+	saslMechanism := plain.Mechanism{
+		Username: "QRCT7SUSU7NG3NIY",
+		Password: "ZZ6siYRsaHgdbTTGVZyZoe/1nhNJDB1p/of82PnyNQXKq0ZZ2UWnsieKl69jxZWt",
+	}
+
+	// Set up TLS configuration.
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Create a dialer that supports SASL/PLAIN over TLS.
+	dialer := &kafka.Dialer{
+		SASLMechanism: saslMechanism,
+		TLS:           tlsConfig,
+	}
+
+	// Use hardcoded Kafka broker
+	kafkaBroker := "pkc-p11xm.us-east-1.aws.confluent.cloud:9092"
+
+	// Connect to the Kafka leader for the specified topic
+	conn, err := dialer.DialLeader(
+		context.Background(),
+		"tcp",
+		kafkaBroker,
+		topic,
+		0, // Use partition 0
+	)
+	if err != nil {
+		log.Printf("Error connecting to Kafka: %v\n", err)
+		return err
+	}
+	defer conn.Close()
+
+	// Create and write the Kafka message
+	msg := kafka.Message{
+		Value: []byte(message),
+	}
+
+	if _, err := conn.WriteMessages(msg); err != nil {
+		log.Printf("Error writing message to Kafka: %v\n", err)
+		return err
+	}
+
+	log.Printf("Message written successfully to topic %s\n", topic)
+	return nil
+}

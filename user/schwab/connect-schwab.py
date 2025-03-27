@@ -28,12 +28,12 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # OAuth configuration – update these as needed
-CLIENT_ID = os.environ["SCHWAB_CLIENT_ID"]
-CLIENT_SECRET = os.environ["SCHWAB_CLIENT_SECRET"]
-REDIRECT_URI = os.environ["SCHWAB_REDIRECT_URI"]
-AUTHORIZATION_URL = os.environ["SCHWAB_AUTHORIZATION_URL"]
-TOKEN_URL = os.environ["SCHWAB_TOKEN_URL"]
-ACCOUNTS_URL = os.environ["SCHWAB_ACCOUNTS_URL"]
+CLIENT_ID = os.getenv("SCHWAB_CLIENT_ID")
+CLIENT_SECRET = os.getenv("SCHWAB_CLIENT_SECRET")
+REDIRECT_URI = os.getenv("SCHWAB_REDIRECT_URI")
+AUTHORIZATION_URL = os.getenv("SCHWAB_AUTHORIZATION_URL")
+TOKEN_URL = os.getenv("SCHWAB_TOKEN_URL")
+ACCOUNTS_URL = os.getenv("SCHWAB_ACCOUNTS_URL")
 
 # Global variables - used only for OAuth flow within a single request
 auth_code = None
@@ -188,16 +188,11 @@ def get_account_positions(access_token):
 
 def convert_schwab_positions_to_portfolio(schwab_data, user_params):
     """
-    Convert Schwab positions data to a portfolio format
-    
-    Args:
-        schwab_data (list): List of account data from Schwab API
-        user_params (dict): User parameters including userId, etc.
-        
-    Returns:
-        dict: Portfolio object in the required format
+    Convert Schwab positions data to a portfolio format with enhanced fields
     """
     holdings = []
+    current_time = datetime.utcnow()
+    formatted_time = current_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     
     try:
         # Process each account in the response
@@ -205,7 +200,6 @@ def convert_schwab_positions_to_portfolio(schwab_data, user_params):
             if 'securitiesAccount' in account:
                 account_data = account['securitiesAccount']
                 
-                # Extract positions from the account
                 if 'positions' in account_data:
                     for position in account_data['positions']:
                         if position.get('longQuantity', 0) > 0 or position.get('shortQuantity', 0) > 0:
@@ -219,38 +213,63 @@ def convert_schwab_positions_to_portfolio(schwab_data, user_params):
                             current_price = 0
                             if quantity > 0:
                                 current_price = market_value / quantity
-                            
+
+                            # Get category from user_params or assign default
+                            symbol = instrument.get('symbol', '')
+                            category = "Unknown"
+                            for cat, symbols in user_params.get("categories", {}).items():
+                                if symbol in symbols:
+                                    category = cat
+                                    break
+
+                            # Enhanced holding with new fields
                             holding = {
-                                "symbol": instrument.get('symbol', ''),
-                                "name": instrument.get('description', instrument.get('symbol', '')),
+                                "symbol": symbol,
+                                "name": instrument.get('description', symbol),
                                 "quantity": quantity,
                                 "costBasis": cost_basis,
                                 "currentPrice": current_price,
                                 "value": market_value,
-                                "currency": "USD"
+                                "currency": "USD",
+                                # New fields
+                                "category": category,
+                                "beta": user_params.get("betas", {}).get(symbol, 1.0),
+                                "startMarketValue": quantity * cost_basis,
+                                "endMarketValue": market_value,
+                                "rebalancedShares": quantity,  # Initial value same as current
+                                "rebalanceCash": 0.0,  # Will be calculated during rebalancing
+                                "valueDifference": market_value - (quantity * cost_basis),
+                                "targetWeight": 0.0  # Will be set during optimization
                             }
                             holdings.append(holding)
-        
+
         # Hash user_id from user_params
         user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
 
         # Calculate total portfolio value
         total_value = sum(holding.get("value", 0) for holding in holdings)
+        total_investment = sum(holding.get("startMarketValue", 0) for holding in holdings)
         
-        # Add percentage of portfolio to each holding
-        for holding in holdings:
-            if total_value > 0:
-                holding["percentage"] = (holding.get("value", 0) / total_value) * 100
-            else:
-                holding["percentage"] = 0
+        # Initialize performance metrics
+        performance_metrics = {
+            "meanReturn": 0.0,
+            "stdDeviation": 0.0,
+            "outperformers": [],
+            "underperformers": [],
+            "zScores": {}
+        }
 
         portfolio_obj = {
             "userId": user_id,
             "name": user_params.get("name", "Schwab Portfolio"),
             "holdings": holdings,
             "totalValue": total_value,
+            "totalInvestment": total_investment,
+            "startDate": user_params.get("startDate", formatted_time),
+            "endDate": formatted_time,
             "policy": userParamsToUserPolicy(user_params),
-            "lastUpdated": datetime.utcnow().isoformat() + "Z"
+            "performance": performance_metrics,
+            "lastUpdated": formatted_time
         }
         
         return portfolio_obj
@@ -261,49 +280,42 @@ def convert_schwab_positions_to_portfolio(schwab_data, user_params):
 
 def userParamsToUserPolicy(user_params):
     """
-    Convert user parameters to a user policy.
-    
-    Args:
-        user_params (dict): Dictionary containing user parameters
-        
-    Returns:
-        dict: A structured policy object for portfolio management
+    Convert user parameters to an enhanced user policy.
     """
     # Extract values with defaults
     user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
-    portfolio_name = user_params.get("name"+str(random.randint(0, 100)), "Schwab Portfolio")
+    portfolio_name = user_params.get("name", "Schwab Portfolio")
     
-    # Extract policy-specific parameters with defaults
-    broker_type = 3  # Schwab broker type
-    investment_horizon = user_params.get("investmentHorizon", 2)
-    rebalance_frequency = user_params.get("rebalanceFrequency", "monthly")
-    risk_tolerance = user_params.get("riskTolerance", 0.5)
-    
-    # Process target allocations if provided, or use empty array
-    allocations = user_params.get("allocations", [])
-    if not isinstance(allocations, list):
-        allocations = []
-    
-    # Format the allocations properly
-    formatted_allocations = []
-    for alloc in allocations:
-        if isinstance(alloc, dict) and "symbol" in alloc and "targetWeight" in alloc:
-            formatted_allocations.append({
-                "symbol": alloc["symbol"],
-                "targetWeight": {"$numberDouble": str(alloc["targetWeight"])}
-            })
-    
-    # Create the policy object
+    # Policy-specific parameters with defaults
     policy = {
-        "brokerType": {"$numberInt": str(broker_type)},
-        "investmentHorizon": {"$numberInt": str(investment_horizon)},
-        "rebalanceFrequency": rebalance_frequency,
-        "riskTolerance": {"$numberDouble": str(risk_tolerance)},
+        "brokerType": 1,  # SCHWAB = 1 in the updated enum
+        "investmentHorizon": user_params.get("investmentHorizon", 2),
+        "rebalanceFrequency": user_params.get("rebalanceFrequency", "monthly"),
+        "riskTolerance": user_params.get("riskTolerance", 0.5),
+        "filingStatus": user_params.get("filingStatus", "Single"),
+        "annualIncome": user_params.get("annualIncome", 75000.0),
+        "equitiesPercent": user_params.get("equitiesPercent", 1.0),
+        "categories": user_params.get("categories", {
+            "Tech": [],
+            "Financials": [],
+            "Consumer Goods": [],
+            "Energy": [],
+            "Entertainment": [],
+            "Industrials": []
+        }),
+        "sectorCaps": user_params.get("sectorCaps", {
+            "Tech": 0.35,
+            "Financials": 0.20,
+            "Consumer Goods": 0.30,
+            "Energy": 0.15,
+            "Entertainment": 0.15,
+            "Industrials": 0.20
+        }),
         "targetAllocation": {
-            "allocations": formatted_allocations,
-            "lastUpdated": datetime.utcnow().isoformat() + "Z",
             "name": portfolio_name,
-        },
+            "allocations": user_params.get("allocations", []),
+            "lastUpdated": datetime.utcnow().isoformat() + "Z"
+        }
     }
     
     return policy
@@ -349,12 +361,6 @@ def encrypt_password(password):
 def uploadPortfolioToMongo(portfolio_obj):
     """
     Upload the portfolio object to MongoDB.
-    
-    Args:
-        portfolio_obj (dict): Portfolio object to be uploaded
-        
-    Returns:
-        dict: Response containing success status and message
     """
     try:
         # Connect to MongoDB
@@ -366,16 +372,16 @@ def uploadPortfolioToMongo(portfolio_obj):
         
         # Extract identifying fields from the portfolio object
         user_id = portfolio_obj.get("userId", "")
-        broker_type = portfolio_obj.get("policy", {}).get("brokerType", {}).get("$numberInt", "")
+        broker_type = portfolio_obj.get("policy", {}).get("brokerType")  # Now directly an integer
         
         # Check if document with same user ID and broker type already exists
         existing_doc = collection.find_one({
             "userId": user_id,
-            "policy.brokerType.$numberInt": broker_type
+            "policy.brokerType": broker_type  # Updated query to match direct integer
         })
         
         if existing_doc:
-            # Update existing document instead of returning an error
+            # Update existing document
             result = collection.replace_one(
                 {"_id": existing_doc["_id"]},
                 portfolio_obj
@@ -383,10 +389,9 @@ def uploadPortfolioToMongo(portfolio_obj):
             logger.info(f"Portfolio updated in MongoDB with ID: {existing_doc['_id']}")
             return {"success": True, "message": "Portfolio successfully updated", "id": str(existing_doc["_id"])}
         else:
-            # Insert the portfolio if no duplicate exists
+            # Insert new portfolio
             result = collection.insert_one(portfolio_obj)
             logger.info("Portfolio successfully uploaded to MongoDB with ID: %s", result.inserted_id)
-            # Convert ObjectId to string explicitly
             return {"success": True, "message": "Portfolio successfully uploaded", "id": str(result.inserted_id)}
         
     except Exception as e:

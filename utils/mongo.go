@@ -6,10 +6,17 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+var (
+	mongoClient *mongo.Client
+	mongoOnce   sync.Once
 )
 
 // ConnectToMongo establishes a connection to MongoDB using the URI from the environment variable.
@@ -49,4 +56,34 @@ func ConnectToMongo() (*mongo.Client, error) {
 
 	log.Println("Connected to MongoDB successfully")
 	return client, nil
+}
+
+func GetMongoClient() *mongo.Client {
+	mongoOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		uri := os.Getenv("MONGO_URI")
+		if uri == "" {
+			log.Printf("MONGODB_URI not set in environment")
+			return
+		}
+
+		client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+		if err != nil {
+			log.Printf("Failed to connect to MongoDB: %v", err)
+			return
+		}
+
+		// Ping the database
+		err = client.Ping(ctx, nil)
+		if err != nil {
+			log.Printf("Failed to ping MongoDB: %v", err)
+			return
+		}
+
+		mongoClient = client
+	})
+
+	return mongoClient
 }

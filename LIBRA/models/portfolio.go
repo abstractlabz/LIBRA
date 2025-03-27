@@ -11,23 +11,44 @@ import (
 
 // Portfolio represents an actual portfolio snapshot along with the user's policy.
 type Portfolio struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
-	UserID      string             `bson:"userId" json:"userId"`
-	Name        string             `bson:"name" json:"name"`
-	Holdings    []Holding          `bson:"holdings" json:"holdings"`
-	TotalValue  float64            `bson:"totalValue" json:"totalValue"`
-	Policy      UserPolicy         `bson:"policy" json:"policy"` // Embedded user policy
-	LastUpdated time.Time          `bson:"lastUpdated" json:"lastUpdated"`
+	ID              primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	UserID          string             `bson:"userId" json:"userId"`
+	Name            string             `bson:"name" json:"name"`
+	Holdings        []Holding          `bson:"holdings" json:"holdings"`
+	TotalValue      float64            `bson:"totalValue" json:"totalValue"`
+	TotalInvestment float64            `bson:"totalInvestment" json:"totalInvestment"`
+	StartDate       time.Time          `bson:"startDate" json:"startDate"`
+	EndDate         time.Time          `bson:"endDate" json:"endDate"`
+	Policy          UserPolicy         `bson:"policy" json:"policy"`
+	Performance     PerformanceMetrics `bson:"performance" json:"performance"`
+	LastUpdated     time.Time          `bson:"lastUpdated" json:"lastUpdated"`
 }
 
 // Holding represents a single asset within the portfolio.
 type Holding struct {
-	Symbol       string  `bson:"symbol" json:"symbol"`             // e.g., "AAPL"
-	Name         string  `bson:"name" json:"name"`                 // e.g., "Apple Inc."
-	Quantity     float64 `bson:"quantity" json:"quantity"`         // Number of shares/units held
-	CostBasis    float64 `bson:"costBasis" json:"costBasis"`       // Cost basis per share/unit
-	CurrentPrice float64 `bson:"currentPrice" json:"currentPrice"` // Latest market price
-	Currency     string  `bson:"currency" json:"currency"`         // Currency code, e.g., "USD"
+	Symbol           string  `bson:"symbol" json:"symbol"`
+	Name             string  `bson:"name" json:"name"`
+	Quantity         float64 `bson:"quantity" json:"quantity"`
+	CostBasis        float64 `bson:"costBasis" json:"costBasis"`
+	CurrentPrice     float64 `bson:"currentPrice" json:"currentPrice"`
+	Currency         string  `bson:"currency" json:"currency"`
+	Category         string  `bson:"category" json:"category"`
+	Beta             float64 `bson:"beta" json:"beta"`
+	StartMarketValue float64 `bson:"startMarketValue" json:"startMarketValue"`
+	EndMarketValue   float64 `bson:"endMarketValue" json:"endMarketValue"`
+	RebalancedShares float64 `bson:"rebalancedShares" json:"rebalancedShares"`
+	RebalanceCash    float64 `bson:"rebalanceCash" json:"rebalanceCash"`
+	ValueDifference  float64 `bson:"valueDifference" json:"valueDifference"`
+	TargetWeight     float64 `bson:"targetWeight" json:"targetWeight"`
+}
+
+// PerformanceMetrics represents portfolio performance analysis data
+type PerformanceMetrics struct {
+	MeanReturn      float64            `bson:"meanReturn" json:"meanReturn"`
+	StdDeviation    float64            `bson:"stdDeviation" json:"stdDeviation"`
+	Outperformers   []string           `bson:"outperformers" json:"outperformers"`
+	Underperformers []string           `bson:"underperformers" json:"underperformers"`
+	ZScores         map[string]float64 `bson:"zScores" json:"zScores"`
 }
 
 // InvestmentHorizon represents the investment duration as an enum.
@@ -58,7 +79,7 @@ type BrokerType int
 const (
 	ETRADE BrokerType = iota
 	SCHWAB
-	ROBINHOOD
+	COINBASE
 	MANUAL
 )
 
@@ -68,8 +89,8 @@ func (bt BrokerType) String() string {
 		return "ETRADE"
 	case SCHWAB:
 		return "SCHWAB"
-	case ROBINHOOD:
-		return "ROBINHOOD"
+	case COINBASE:
+		return "COINBASE"
 	case MANUAL:
 		return "MANUAL"
 	default:
@@ -77,8 +98,6 @@ func (bt BrokerType) String() string {
 	}
 }
 
-// UnmarshalJSON provides custom unmarshalling for BrokerType.
-// It allows brokerType to be provided either as a string or a number.
 func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 	// First, try to parse data as a string.
 	var s string
@@ -88,8 +107,8 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 			*bt = ETRADE
 		case "SCHWAB":
 			*bt = SCHWAB
-		case "ROBINHOOD":
-			*bt = ROBINHOOD
+		case "COINBASE":
+			*bt = COINBASE
 		case "MANUAL":
 			*bt = MANUAL
 		default:
@@ -106,8 +125,8 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 			*bt = ETRADE
 		case int(SCHWAB):
 			*bt = SCHWAB
-		case int(ROBINHOOD):
-			*bt = ROBINHOOD
+		case int(COINBASE):
+			*bt = COINBASE
 		case int(MANUAL):
 			*bt = MANUAL
 		default:
@@ -116,7 +135,7 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try MongoDB extended JSON format (e.g. {"$numberInt": "3"})
+	// Next, try to parse data as a number in the format {"$numberInt": "3"}.
 	var mongoDoc map[string]interface{}
 	if err := json.Unmarshal(data, &mongoDoc); err == nil {
 		if numInt, ok := mongoDoc["$numberInt"]; ok {
@@ -127,8 +146,8 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 						*bt = ETRADE
 					case int(SCHWAB):
 						*bt = SCHWAB
-					case int(ROBINHOOD):
-						*bt = ROBINHOOD
+					case int(COINBASE):
+						*bt = COINBASE
 					case int(MANUAL):
 						*bt = MANUAL
 					default:
@@ -138,30 +157,36 @@ func (bt *BrokerType) UnmarshalJSON(data []byte) error {
 				}
 			}
 		}
+		return nil
 	}
 
-	return fmt.Errorf("BrokerType should be a string or number, got %s", data)
+	return fmt.Errorf("unknown broker type: %v", data)
 }
 
 // UserPolicy represents the user's portfolio management preferences.
 type UserPolicy struct {
-	RiskTolerance      float64           `bson:"riskTolerance" json:"riskTolerance"`           // e.g., 0.0 (low) to 1.0 (high)
-	InvestmentHorizon  InvestmentHorizon `bson:"investmentHorizon" json:"investmentHorizon"`   // ShortTerm, MediumTerm, or LongTerm
-	BrokerType         BrokerType        `bson:"brokerType" json:"brokerType"`                 // Broker type as a custom enum (with custom unmarshal logic)
-	TargetAllocation   TargetPortfolio   `bson:"targetAllocation" json:"targetAllocation"`     // The desired portfolio allocation
-	RebalanceFrequency string            `bson:"rebalanceFrequency" json:"rebalanceFrequency"` // e.g., "monthly", "quarterly"
+	RiskTolerance      float64             `bson:"riskTolerance" json:"riskTolerance"`
+	InvestmentHorizon  InvestmentHorizon   `bson:"investmentHorizon" json:"investmentHorizon"`
+	BrokerType         BrokerType          `bson:"brokerType" json:"brokerType"`
+	TargetAllocation   TargetPortfolio     `bson:"targetAllocation" json:"targetAllocation"`
+	RebalanceFrequency string              `bson:"rebalanceFrequency" json:"rebalanceFrequency"`
+	FilingStatus       string              `bson:"filingStatus" json:"filingStatus"`
+	AnnualIncome       float64             `bson:"annualIncome" json:"annualIncome"`
+	EquitiesPercent    float64             `bson:"equitiesPercent" json:"equitiesPercent"`
+	Categories         map[string][]string `bson:"categories" json:"categories"`
+	SectorCaps         map[string]float64  `bson:"sectorCaps" json:"sectorCaps"`
 }
 
 // TargetPortfolio represents the desired asset allocation.
 type TargetPortfolio struct {
 	UserID      string          `bson:"userId" json:"userId"`
-	Name        string          `bson:"name" json:"name"` // e.g., "Aggressive Growth Allocation"
+	Name        string          `bson:"name" json:"name"`
 	Allocations []TargetHolding `bson:"allocations" json:"allocations"`
 	LastUpdated time.Time       `bson:"lastUpdated" json:"lastUpdated"`
 }
 
 // TargetHolding represents the desired allocation for an asset or asset class.
 type TargetHolding struct {
-	Symbol       string  `bson:"symbol" json:"symbol"`             // e.g., "AAPL" or "Stocks"
-	TargetWeight float64 `bson:"targetWeight" json:"targetWeight"` // e.g., 0.6 for 60%
+	Symbol       string  `bson:"symbol" json:"symbol"`
+	TargetWeight float64 `bson:"targetWeight" json:"targetWeight"`
 }

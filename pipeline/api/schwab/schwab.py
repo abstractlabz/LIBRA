@@ -354,12 +354,14 @@ def upload_portfolio_to_mongo(portfolio_obj):
         
         # Extract identifying fields
         user_id = portfolio_obj.get("userId", "")
-        broker_type = portfolio_obj.get("policy", {}).get("brokerType", {}).get("$numberInt", "")
+        
+        # Handle broker type differently now that it's a direct integer
+        broker_type = portfolio_obj.get("policy", {}).get("brokerType")
         
         # Check if document already exists
         existing_doc = collection.find_one({
             "userId": user_id,
-            "policy.brokerType.$numberInt": broker_type
+            "policy.brokerType": broker_type  # Updated query to match new format
         })
         
         if existing_doc:
