@@ -247,7 +247,7 @@ class OAuthHandler(BaseHTTPRequestHandler):
         global auth_code, callback_url
         
         logger.info(f"Received request: {self.path}")
-        callback_url = f"@https://127.0.0.1:8050{self.path}"
+        callback_url = f"@https://127.0.0.1:5003{self.path}"
         
         try:
             parsed_url = urlparse(self.path)
@@ -280,7 +280,7 @@ class OAuthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
-def start_server(port=8050):
+def start_server(port=5003):
     """Start the OAuth callback server"""
     try:
         server_address = ('127.0.0.1', port)

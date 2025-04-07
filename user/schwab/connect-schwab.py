@@ -20,8 +20,11 @@ from pymongo import MongoClient
 from confluent_kafka import Producer
 from datetime import datetime, timedelta
 from bson import ObjectId
+import atexit
+from flask_cors import CORS  # Import Flask-CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -35,10 +38,18 @@ AUTHORIZATION_URL = os.getenv("SCHWAB_AUTHORIZATION_URL")
 TOKEN_URL = os.getenv("SCHWAB_TOKEN_URL")
 ACCOUNTS_URL = os.getenv("SCHWAB_ACCOUNTS_URL")
 
+# Add debug logging for OAuth configuration
+logger.debug("OAuth Configuration:")
+logger.debug(f"CLIENT_ID: {CLIENT_ID}")
+logger.debug(f"CLIENT_SECRET: {'*' * len(CLIENT_SECRET) if CLIENT_SECRET else 'Not Set'}")
+logger.debug(f"REDIRECT_URI: {REDIRECT_URI}")
+logger.debug(f"AUTHORIZATION_URL: {AUTHORIZATION_URL}")
+logger.debug(f"TOKEN_URL: {TOKEN_URL}")
+logger.debug(f"ACCOUNTS_URL: {ACCOUNTS_URL}")
+
 # Global variables - used only for OAuth flow within a single request
 auth_code = None
 callback_url = None
-# Removed the global access_token variable to prevent token reuse across requests
 
 # Add a custom JSON encoder class to handle MongoDB ObjectId
 class MongoJSONEncoder(json.JSONEncoder):
@@ -116,48 +127,72 @@ def get_access_token(code=None, refresh_token=None):
     
     Args:
         code (str, optional): The authorization code
-        refresh_token (str, optional): The refresh token
+        refresh_token (str, optional): The OAuth refresh token
         
     Returns:
         dict: Containing access_token, refresh_token, and expires_in
     """
-    # Prepare the Basic Authorization header
-    credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
-    encoded_credentials = base64.b64encode(credentials.encode()).decode()
-    headers = {
-        "Authorization": f"Basic {encoded_credentials}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    
-    # Determine grant type and prepare data
-    if code:
-        data = {
-            "grant_type": "authorization_code",
-            "code": code+'@',  # Add @ as required by Schwab
-            "redirect_uri": REDIRECT_URI
+    try:
+        # Prepare the Basic Authorization header
+        credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        headers = {
+            "Authorization": f"Basic {encoded_credentials}",
+            "Content-Type": "application/x-www-form-urlencoded"
         }
-    elif refresh_token:
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token
+        
+        # Determine grant type and prepare data
+        if code:
+            data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI
+            }
+            logger.debug(f"Using authorization code flow with code: {code}")
+        elif refresh_token:
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token
+            }
+            logger.debug("Using refresh token flow")
+        else:
+            raise ValueError("Either code or refresh_token must be provided")
+        
+        # Log request details
+        logger.debug(f"Token request URL: {TOKEN_URL}")
+        logger.debug(f"Token request headers: {headers}")
+        logger.debug(f"Token request data: {data}")
+        
+        # Make the token request
+        response = requests.post(TOKEN_URL, headers=headers, data=data, verify=False)
+        
+        # Log response details
+        logger.debug(f"Token response status code: {response.status_code}")
+        logger.debug(f"Token response headers: {response.headers}")
+        
+        if response.status_code != 200:
+            logger.error(f"Error fetching token: {response.status_code}")
+            logger.error(f"Response headers: {response.headers}")
+            logger.error(f"Response body: {response.text}")
+            response.raise_for_status()
+        
+        token_data = response.json()
+        logger.debug("Successfully obtained token data")
+        
+        return {
+            "access_token": token_data.get("access_token"),
+            "refresh_token": token_data.get("refresh_token"),
+            "expires_in": token_data.get("expires_in", 1800)  # Default to 30 minutes
         }
-    else:
-        raise ValueError("Either code or refresh_token must be provided")
-    
-    # Make the token request
-    logger.debug(f"Sending token request with data: {data}")
-    response = requests.post(TOKEN_URL, headers=headers, data=data, verify=False)
-    
-    if response.status_code != 200:
-        logger.error(f"Error fetching token: {response.status_code} - {response.text}")
-        response.raise_for_status()
-    
-    token_data = response.json()
-    return {
-        "access_token": token_data.get("access_token"),
-        "refresh_token": token_data.get("refresh_token"),
-        "expires_in": token_data.get("expires_in", 1800)  # Default to 30 minutes
-    }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request failed during token exchange: {str(e)}")
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode token response: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during token exchange: {str(e)}")
+        raise
 
 def get_account_positions(access_token):
     """
@@ -407,121 +442,22 @@ def delivery_report(err, msg):
     else:
         logger.info('Message delivered to %s [%s]', msg.topic(), msg.partition())
 
-class OAuthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global auth_code, callback_url
-        
-        # Store the full request path
-        logger.info(f"Received request: {self.path}")
-        callback_url = f"@https://127.0.0.1:8050{self.path}"
-        logger.info(f"Stored callback URL: {callback_url}")
-        
-        try:
-            # Parse the URL to get the query parameters
-            parsed_url = urlparse(self.path)
-            query_params = parse_qs(parsed_url.query)
-            logger.debug(f"Query parameters: {query_params}")
-            
-            # Extract code parameter
-            if 'code' in query_params:
-                raw_code = query_params['code'][0]
-                # URL decode and clean up
-                auth_code = unquote(raw_code).rstrip('@')
-                logger.info(f"Extracted and stored auth code: {auth_code}")
-                
-                # Send success response
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                self.wfile.write(b"<html><body><h1>Authorization Successful</h1><p>You can close this window.</p></body></html>")
-            else:
-                logger.warning("No code parameter found in request")
-                self.send_response(400)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-                self.wfile.write(b"<html><body><h1>Error: No code parameter found</h1></body></html>")
-        
-        except Exception as e:
-            logger.error(f"Error processing request: {e}")
-            self.send_response(500)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b"<html><body><h1>Server Error</h1></body></html>")
-
-def start_server(port=8050):
-    try:
-        server_address = ('127.0.0.1', port)
-        httpd = HTTPServer(server_address, OAuthHandler)
-        
-        # Configure SSL with more detailed error handling
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        try:
-            ssl_context.load_cert_chain('server.crt', 'server.key')
-            logger.info("SSL certificates loaded successfully")
-        except FileNotFoundError:
-            logger.error("SSL certificates not found. Please generate them using:")
-            logger.error("openssl req -x509 -newkey rsa:4096 -nodes -out server.crt -keyout server.key -days 365 -subj '/CN=localhost'")
-            raise
-        except ssl.SSLError as ssl_err:
-            logger.error(f"SSL Error: {ssl_err}")
-            raise
-        
-        # Wrap the socket with SSL
-        httpd.socket = ssl_context.wrap_socket(httpd.socket, server_side=True)
-        logger.info(f"HTTPS Server started successfully on https://127.0.0.1:{port}")
-        return httpd
+def build_authorization_url(user_id):
+    """
+    Build the authorization URL for the OAuth flow.
     
-    except Exception as e:
-        logger.error(f"Failed to start server: {str(e)}")
-        raise
-
-def wait_for_callback(httpd, timeout_seconds=300):
-    global auth_code, callback_url
-    
-    logger.info("Waiting for authorization callback...")
-    logger.info(f"You have {timeout_seconds} seconds to complete the authorization in your browser")
-    
-    # Set a timeout for the server socket so handle_request() doesn't block forever
-    httpd.timeout = 1  # Check every second
-    
-    # Track the start time
-    start_time = time.time()
-    
-    # Continue trying to handle a request until we get a code or time out
-    while auth_code is None:
-        # Check for timeout
-        elapsed_time = time.time() - start_time
-        if elapsed_time > timeout_seconds:
-            logger.info(f"Timeout after {int(elapsed_time)} seconds")
-            return False
+    Args:
+        user_id (str): The user ID to include as state parameter
         
-        # Print a waiting message every 10 seconds
-        if int(elapsed_time) % 10 == 0 and int(elapsed_time) > 0:
-            logger.info(f"Still waiting for callback... ({int(elapsed_time)} seconds elapsed)")
-        
-        try:
-            # This will wait for up to 1 second for a request
-            httpd.handle_request()
-            
-            # If we got a code, we're done
-            if auth_code is not None:
-                logger.info("Authorization code received!")
-                logger.info(f"Code: {auth_code}")
-                logger.info(f"Full callback URL: {callback_url}")
-                return True
-            
-        except Exception as e:
-            logger.error(f"Error handling request: {e}")
-    
-    # This should only happen if the auth_code was set by some other means
-    return auth_code is not None
-
-def build_authorization_url():
+    Returns:
+        str: The complete authorization URL
+    """
     params = {
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": "trade"
+        "scope": "trade",
+        "state": user_id  # Include user_id as state parameter
     }
     auth_url = f"{AUTHORIZATION_URL}?{urllib.parse.urlencode(params)}"
     logger.debug("Built authorization URL: %s", auth_url)
@@ -538,11 +474,8 @@ def connect_schwab():
     - user_params: Additional user parameters
     
     Returns:
-        JSON response with success status and message
+        JSON response with success status and authorization URL
     """
-    global auth_code
-    auth_code = None  # Reset for each request
-    
     logging.info("Starting Schwab connection process")
     try:
         # Get data from request body
@@ -565,9 +498,6 @@ def connect_schwab():
         user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
         logger.info(f"Processing request for user ID: {user_id}")
         
-        # Access token for this user only
-        access_token = None
-        
         # Try to get stored tokens for this specific user
         stored_tokens = get_stored_tokens(user_id)
         
@@ -575,6 +505,31 @@ def connect_schwab():
         if stored_tokens and stored_tokens.get("expiry_time") > datetime.utcnow():
             logger.info(f"Using stored access token for user {user_id}")
             access_token = stored_tokens.get("access_token")
+            
+            # Get account positions and return portfolio data
+            try:
+                positions_data = get_account_positions(access_token)
+                portfolio_obj = convert_schwab_positions_to_portfolio(positions_data, user_params)
+                upload_result = uploadPortfolioToMongo(portfolio_obj)
+                
+                if not upload_result.get("success", False):
+                    return jsonify({"success": False, "message": upload_result.get("message", "Failed to upload portfolio")})
+                
+                # Publish to Kafka if configured
+                if os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
+                    publish_to_kafka(portfolio_obj)
+                
+                return jsonify({
+                    "success": True,
+                    "message": "Portfolio data retrieved successfully",
+                    "portfolio_id": upload_result.get("id", ""),
+                    "holdings_count": len(portfolio_obj["holdings"]),
+                    "total_value": portfolio_obj.get("totalValue", 0)
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to retrieve portfolio data: {e}")
+                return jsonify({"success": False, "message": f"Failed to retrieve portfolio data: {str(e)}"})
         
         # If we have a refresh token but access token expired, try to refresh
         elif stored_tokens and stored_tokens.get("refresh_token"):
@@ -590,111 +545,156 @@ def connect_schwab():
                     token_data["refresh_token"],
                     token_data["expires_in"]
                 )
+                
+                # Get account positions and return portfolio data
+                positions_data = get_account_positions(access_token)
+                portfolio_obj = convert_schwab_positions_to_portfolio(positions_data, user_params)
+                upload_result = uploadPortfolioToMongo(portfolio_obj)
+                
+                if not upload_result.get("success", False):
+                    return jsonify({"success": False, "message": upload_result.get("message", "Failed to upload portfolio")})
+                
+                # Publish to Kafka if configured
+                if os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
+                    publish_to_kafka(portfolio_obj)
+                
+                return jsonify({
+                    "success": True,
+                    "message": "Portfolio data retrieved successfully",
+                    "portfolio_id": upload_result.get("id", ""),
+                    "holdings_count": len(portfolio_obj["holdings"]),
+                    "total_value": portfolio_obj.get("totalValue", 0)
+                })
+                
             except Exception as e:
                 logger.error(f"Failed to refresh token: {e}")
                 # If refresh fails, we need to do a full OAuth flow
-                access_token = None
+                pass
         
-        # If we don't have valid tokens, do the full OAuth flow
-        if not access_token:
-            # Start the OAuth flow
-            httpd = None
-            try:
-                # Start the server
-                httpd = start_server(8050)
-                # Build and open the authorization URL
-                auth_url = build_authorization_url()
-                logger.info("Please authorize the application by visiting the following URL:")
-                logger.info(auth_url)
-                # Open the browser for the user
-                webbrowser.open(auth_url)
-                logger.info("Opening your browser...")
-                
-                # Wait for the callback with a timeout
-                success = wait_for_callback(httpd, timeout_seconds=300)
-                if not success:
-                    return jsonify({"success": False, "message": "Authorization failed - no callback received"})
-                
-                # Exchange authorization code for access token
-                logger.debug("Exchanging authorization code for access token...")
-                try:
-                    token_data = get_access_token(code=auth_code)
-                    access_token = token_data["access_token"]
-                    
-                    # Store the tokens for this specific user
-                    store_tokens(
-                        user_id,
-                        token_data["access_token"],
-                        token_data["refresh_token"],
-                        token_data["expires_in"]
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to exchange code for token: {e}")
-                    return jsonify({"success": False, "message": f"Failed to obtain access token: {str(e)}"})
-            finally:
-                # Shutdown the server
-                if httpd:
-                    httpd.server_close()
-                    logger.info("Server shut down")
+        # If we don't have valid tokens, initiate OAuth flow
+        auth_url = build_authorization_url(user_id)  # Pass user_id to the function
+        return jsonify({
+            "success": True,
+            "message": "Authorization required",
+            "auth_url": auth_url,
+            "user_id": user_id
+        })
         
-        # With access token ready, now get the account positions for this user
+    except Exception as e:
+        logging.exception("An error occurred during Schwab connection: %s", e)
+        return jsonify({"success": False, "message": f"Error: {str(e)}"})
+
+@app.route('/', methods=['GET'])
+def schwab_callback():
+    """
+    Endpoint to handle the OAuth callback from Schwab.
+    
+    Expects query parameters:
+    - code: The authorization code
+    - state: Optional state parameter for security
+    
+    Returns:
+        JSON response with success status and portfolio data
+    """
+    try:
+        # Get the authorization code
+        code = request.args.get('code')
+        if not code:
+            return jsonify({"success": False, "message": "No authorization code provided"})
+        
+        # Get user_id from state parameter
+        user_id = request.args.get('state')
+        if not user_id:
+            return jsonify({"success": False, "message": "No user ID provided"})
+        
+        # Exchange code for tokens
         try:
-            logger.info("Retrieving account positions...")
-            positions_data = get_account_positions(access_token)
-            logger.info(f"Account positions received: {len(positions_data)} accounts")
+            token_data = get_access_token(code=code)
+            access_token = token_data["access_token"]
             
-            # Convert positions to portfolio format
-            portfolio_obj = convert_schwab_positions_to_portfolio(positions_data, user_params)
-            logger.info(f"Converted to portfolio format with {len(portfolio_obj['holdings'])} holdings")
+            
+            # Store the tokens
+            store_tokens(
+                user_id,
+                token_data["access_token"],
+                token_data["refresh_token"],
+                token_data["expires_in"]
+            )
+            
+            # Get account positions
+            positions_data = get_account_positions(access_token)
+            portfolio_obj = convert_schwab_positions_to_portfolio(positions_data, {"userId": user_id})
             
             # Upload to MongoDB
             upload_result = uploadPortfolioToMongo(portfolio_obj)
             if not upload_result.get("success", False):
                 return jsonify({"success": False, "message": upload_result.get("message", "Failed to upload portfolio")})
             
-            # Publish to Kafka
-            kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
-            kafka_key = os.getenv("KAFKA_KEY")
-            kafka_secret = os.getenv("KAFKA_SECRET")
-            
-            if kafka_bootstrap_servers and kafka_key and kafka_secret:
-                # Kafka Producer configuration
-                config = {
-                    'bootstrap.servers': kafka_bootstrap_servers,
-                    'sasl.username': kafka_key,
-                    'sasl.password': kafka_secret,
-                    'security.protocol': 'SASL_SSL',
-                    'sasl.mechanisms': 'PLAIN',
-                    'acks': 'all'
-                }
-                
-                # Create Kafka Producer
-                producer = Producer(config)
-                
-                # Produce message to topic - use custom JSON encoder for serialization
-                portfolio_payload = json.dumps(portfolio_obj, cls=MongoJSONEncoder).encode('utf-8')
-                producer.produce("alert_rebalance", portfolio_payload, callback=delivery_report)
-                producer.flush()
-                logger.info("Portfolio data sent to Kafka")
-            
-            # Use a serializable ID (string)
-            portfolio_id = upload_result.get("id", "")
-            if isinstance(portfolio_id, ObjectId):
-                portfolio_id = str(portfolio_id)
+            # Publish to Kafka if configured
+            if os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
+                publish_to_kafka(portfolio_obj)
             
             return jsonify({
-                "success": True, 
-                "message": "Schwab connection successful",
-                "portfolio_id": portfolio_id,
+                "success": True,
+                "message": "Portfolio data retrieved successfully",
+                "portfolio_id": upload_result.get("id", ""),
                 "holdings_count": len(portfolio_obj["holdings"]),
                 "total_value": portfolio_obj.get("totalValue", 0)
             })
+            
         except Exception as e:
-            logger.error(f"Failed to retrieve or process account positions: {e}")
-            return jsonify({"success": False, "message": f"Failed to retrieve account data: {str(e)}"})
+            logger.error(f"Failed to exchange code for token: {e}")
+            return jsonify({"success": False, "message": f"Failed to obtain access token: {str(e)}"})
+            
     except Exception as e:
-        logging.exception("An error occurred during Schwab connection: %s", e)
-        return jsonify({"success": False, "message": f"Error: {str(e)}"})
+        logger.error(f"Error in callback handler: {e}")
+        return jsonify({"success": False, "message": f"Callback error: {str(e)}"})
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+def publish_to_kafka(portfolio_obj):
+    """Helper function to publish portfolio data to Kafka"""
+    try:
+        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        kafka_key = os.getenv("KAFKA_KEY")
+        kafka_secret = os.getenv("KAFKA_SECRET")
+        
+        if kafka_bootstrap_servers and kafka_key and kafka_secret:
+            config = {
+                'bootstrap.servers': kafka_bootstrap_servers,
+                'sasl.username': kafka_key,
+                'sasl.password': kafka_secret,
+                'security.protocol': 'SASL_SSL',
+                'sasl.mechanisms': 'PLAIN',
+                'acks': 'all'
+            }
+            
+            producer = Producer(config)
+            portfolio_payload = json.dumps(portfolio_obj, cls=MongoJSONEncoder).encode('utf-8')
+            producer.produce("alert_rebalance", portfolio_payload, callback=delivery_report)
+            producer.flush()
+            logger.info("Portfolio data sent to Kafka")
+    except Exception as e:
+        logger.error(f"Failed to publish to Kafka: {e}")
+
+if __name__ == "__main__":
+    # Create SSL context
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    try:
+        ssl_context.load_cert_chain('server.crt', 'server.key')
+        logger.info("SSL certificates loaded successfully")
+    except FileNotFoundError:
+        logger.error("SSL certificates not found. Generating self-signed certificates...")
+        import subprocess
+        subprocess.run([
+            'openssl', 'req', '-x509', '-newkey', 'rsa:4096', '-nodes',
+            '-out', 'server.crt', '-keyout', 'server.key',
+            '-days', '365', '-subj', '/CN=localhost'
+        ], check=True)
+        ssl_context.load_cert_chain('server.crt', 'server.key')
+    
+    # Run the Flask app with SSL
+    app.run(
+        debug=True,
+        host='0.0.0.0',
+        port=5003,  # Change to 5003 to match the callback URL
+        ssl_context=ssl_context
+    )

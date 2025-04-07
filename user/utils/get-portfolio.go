@@ -16,6 +16,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/fernet/fernet-go"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // Global MongoDB client instance for re-use among handlers
@@ -147,14 +148,21 @@ func main() {
 }
 
 // getPortfolioHandler handles GET requests to /getPortfolio
-// It expects a query parameter "user" which contains the id_hash.
+// It expects a query parameter "id" which contains the MongoDB ObjectID.
 // The handler connects to MongoDB, selects the "Portfolios" database and "integrations" collection,
-// and retrieves the document where "user_id" equals the provided id_hash.
+// and retrieves the document with the specified ObjectID.
 func getPortfolioHandler(c *gin.Context) {
-	// Retrieve the id_hash from query parameter "user"
-	idHash := c.Query("user")
-	if idHash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing user parameter"})
+	// Retrieve the ObjectID from query parameter "id"
+	idParam := c.Query("id")
+	if idParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing id parameter"})
+		return
+	}
+
+	// Convert the string ID to MongoDB ObjectID
+	objectID, err := primitive.ObjectIDFromHex(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id format"})
 		return
 	}
 
@@ -165,12 +173,12 @@ func getPortfolioHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create the filter to match the document with a user_id equal to idHash.
-	filter := bson.M{"userId": idHash}
+	// Create the filter to match the document with the specified ObjectID.
+	filter := bson.M{"_id": objectID}
 
 	// Define a result holder - using a generic map since the structure is unspecified.
 	var portfolio bson.M
-	err := collection.FindOne(ctx, filter).Decode(&portfolio)
+	err = collection.FindOne(ctx, filter).Decode(&portfolio)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			c.JSON(http.StatusNotFound, gin.H{"error": "portfolio not found"})

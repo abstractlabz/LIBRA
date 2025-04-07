@@ -95,6 +95,26 @@ func getSession(w http.ResponseWriter, r *http.Request) (string, Session) {
 	return cookie.Value, sess
 }
 
+// CORS middleware to handle cross-origin requests
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "3600")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Call the next handler
+		next(w, r)
+	}
+}
+
 // indexHandler redirects the user to Coinbase's OAuth authorization URL.
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	scope := "wallet:accounts:read"
@@ -106,7 +126,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	params := url.Values{}
 	params.Add("client_id", clientID)
-	params.Add("redirect_uri", redirectURI)
+	params.Add("redirect_uri", "https://127.0.0.1:6070/callback") // Use explicit callback path
 	params.Add("response_type", "code")
 	params.Add("scope", scope)
 	authURL.RawQuery = params.Encode()
@@ -810,13 +830,12 @@ func main() {
 		log.Fatal("COINBASE_CLIENT_ID, COINBASE_CLIENT_SECRET, and COINBASE_REDIRECT_URI must be set")
 	}
 
-	// Set up HTTP handlers.
-	http.HandleFunc("/", indexHandler)
-	// Updated callback route to match the redirect URI
-	http.HandleFunc("/connect", callbackHandler)
-	http.HandleFunc("/holdings", holdingsHandler)
+	// Set up HTTP handlers with CORS middleware
+	http.HandleFunc("/", corsMiddleware(indexHandler))
+	http.HandleFunc("/callback", corsMiddleware(callbackHandler))
+	http.HandleFunc("/holdings", corsMiddleware(holdingsHandler))
 
-	// Start the server on port 6070.
-	fmt.Println("Server starting on :6070")
-	log.Fatal(http.ListenAndServe(":6070", nil))
+	// Start the server with TLS on port 6070.
+	fmt.Println("Server starting on :6070 with HTTPS")
+	log.Fatal(http.ListenAndServeTLS(":6070", "server.crt", "server.key", nil))
 }
