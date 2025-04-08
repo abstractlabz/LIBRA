@@ -50,7 +50,8 @@ ENV PYTHONUNBUFFERED=1
 # Expose ports for the services
 EXPOSE 6070  
 EXPOSE 5002  
-EXPOSE 5003  
+EXPOSE 5003
+EXPOSE 8080
 
 # Command to run the startup script
 ENTRYPOINT ["./startup.sh"]
