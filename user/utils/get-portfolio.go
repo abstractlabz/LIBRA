@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -143,8 +144,32 @@ func main() {
 	// Define the endpoint that retrieves the portfolio
 	router.GET("/getPortfolio", getPortfolioHandler)
 
-	// Run Gin on default port 8080
-	router.Run(":8080")
+	// Create HTTPS server with SSL
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
+	}
+
+	// Load SSL certificates
+	certFile := "server.crt"
+	keyFile := "server.key"
+
+	// Check if certificates exist, if not generate them
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		log.Println("SSL certificates not found. Generating self-signed certificates...")
+		cmd := exec.Command("openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes",
+			"-out", certFile, "-keyout", keyFile,
+			"-days", "365", "-subj", "/CN=localhost")
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("Failed to generate SSL certificates: %v", err)
+		}
+	}
+
+	// Start HTTPS server
+	log.Println("Starting HTTPS server on :8080")
+	if err := server.ListenAndServeTLS(certFile, keyFile); err != nil {
+		log.Fatalf("Failed to start HTTPS server: %v", err)
+	}
 }
 
 // getPortfolioHandler handles GET requests to /getPortfolio

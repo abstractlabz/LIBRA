@@ -126,7 +126,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	params := url.Values{}
 	params.Add("client_id", clientID)
-	params.Add("redirect_uri", "https://127.0.0.1:6070/callback") // Use explicit callback path
+	params.Add("redirect_uri", "https://coinbase.fineasapp.io:2083/callback") // Use explicit callback path
 	params.Add("response_type", "code")
 	params.Add("scope", scope)
 	authURL.RawQuery = params.Encode()
