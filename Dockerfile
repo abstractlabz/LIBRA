@@ -19,7 +19,7 @@ WORKDIR /app
 # Generate SSL certificates for local development
 RUN openssl req -x509 -newkey rsa:4096 -nodes \
     -out server.crt -keyout server.key \
-    -days 365 -subj '/CN=localhost'
+    -days 365 -subj '/CN=schwab.fineasapp.io'
 
 # Copy go mod and sum files
 COPY go.mod go.sum ./

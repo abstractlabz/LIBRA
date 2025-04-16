@@ -687,7 +687,7 @@ if __name__ == "__main__":
         subprocess.run([
             'openssl', 'req', '-x509', '-newkey', 'rsa:4096', '-nodes',
             '-out', 'server.crt', '-keyout', 'server.key',
-            '-days', '365', '-subj', '/CN=localhost'
+            '-days', '365', '-subj', '/CN=schwab.fineasapp.io'
         ], check=True)
         ssl_context.load_cert_chain('server.crt', 'server.key')
     
@@ -695,6 +695,6 @@ if __name__ == "__main__":
     app.run(
         debug=True,
         host='0.0.0.0',
-        port=5003,  # Change to 5003 to match the callback URL
+        port=5003,
         ssl_context=ssl_context
     )

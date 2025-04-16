@@ -247,7 +247,7 @@ class OAuthHandler(BaseHTTPRequestHandler):
         global auth_code, callback_url
         
         logger.info(f"Received request: {self.path}")
-        callback_url = f"@https://127.0.0.1:5003{self.path}"
+        callback_url = f"https://schwab.fineasapp.io:2087{self.path}"
         
         try:
             parsed_url = urlparse(self.path)
@@ -283,7 +283,7 @@ class OAuthHandler(BaseHTTPRequestHandler):
 def start_server(port=5003):
     """Start the OAuth callback server"""
     try:
-        server_address = ('127.0.0.1', port)
+        server_address = ('0.0.0.0', port)
         httpd = HTTPServer(server_address, OAuthHandler)
         
         # Configure SSL
@@ -293,11 +293,11 @@ def start_server(port=5003):
             logger.info("SSL certificates loaded successfully")
         except FileNotFoundError:
             logger.error("SSL certificates not found. Please generate them using:")
-            logger.error("openssl req -x509 -newkey rsa:4096 -nodes -out server.crt -keyout server.key -days 365 -subj '/CN=localhost'")
+            logger.error("openssl req -x509 -newkey rsa:4096 -nodes -out server.crt -keyout server.key -days 365 -subj '/CN=schwab.fineasapp.io'")
             raise
         
         httpd.socket = ssl_context.wrap_socket(httpd.socket, server_side=True)
-        logger.info(f"HTTPS Server started on https://127.0.0.1:{port}")
+        logger.info(f"HTTPS Server started on https://schwab.fineasapp.io:{port}") # TODO: change to 0.0.0.0
         return httpd
     
     except Exception as e:

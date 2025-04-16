@@ -159,7 +159,7 @@ func main() {
 		log.Println("SSL certificates not found. Generating self-signed certificates...")
 		cmd := exec.Command("openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes",
 			"-out", certFile, "-keyout", keyFile,
-			"-days", "365", "-subj", "/CN=localhost")
+			"-days", "365", "-subj", "/CN=portfolio.fineasapp.io")
 		if err := cmd.Run(); err != nil {
 			log.Fatalf("Failed to generate SSL certificates: %v", err)
 		}
