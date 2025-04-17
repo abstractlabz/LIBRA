@@ -4,12 +4,12 @@
 echo "Starting services..."
 
 # Start Go services
-#echo "Starting connect-coinbase on port 6070..."
-#cd /app/user/coinbase
+echo "Starting connect-coinbase on port 6070..."
+cd /app/user/coinbase
 # Copy SSL certificates to the current directory
-#cp /app/server.crt . && cp /app/server.key .
-#go run connect-coinbase.go &
-#COINBASE_PID=$!
+cp /app/server.crt . && cp /app/server.key .
+go run connect-coinbase.go &
+COINBASE_PID=$!
 
 echo "Starting connect-schwab on port 5003..."
 cd /app/user/schwab
@@ -28,7 +28,7 @@ cd /app/user/utils && go run get-portfolio.go &
 PORTFOLIO_PID=$!
 
 # Start Python services
-#cd /app/pipeline/api/coinbase && python3 coinbase.py &
+cd /app/pipeline/api/coinbase && python3 coinbase.py &
 cd /app/pipeline/api/schwab && python3 schwab.py &
 
 # Function to check if a port is listening
@@ -52,7 +52,7 @@ check_port() {
 }
 
 # Check if critical services are running
-#check_port 6070 "connect-coinbase" || exit 1
+check_port 6070 "connect-coinbase" || exit 1
 check_port 5003 "connect-schwab" || exit 1
 check_port 8080 "get-portfolio" || exit 1
 

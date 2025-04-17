@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -143,6 +144,7 @@ func main() {
 
 	// Define the endpoint that retrieves the portfolio
 	router.GET("/getPortfolio", getPortfolioHandler)
+	router.GET("/getPortfolioByUserId", getPortfolioUserIdHandler)
 
 	// Create HTTPS server with SSL
 	server := &http.Server{
@@ -214,5 +216,53 @@ func getPortfolioHandler(c *gin.Context) {
 	}
 
 	// Return the retrieved portfolio as JSON.
+	c.JSON(http.StatusOK, portfolio)
+}
+
+// getPortfolioUserIdHandler handles GET requests to /getPortfolioByUserId
+// It expects query parameters "userId" and "brokerType" to filter portfolios
+func getPortfolioUserIdHandler(c *gin.Context) {
+	// Retrieve query parameters
+	userId := c.Query("userId")
+	brokerTypeStr := c.Query("brokerType")
+
+	if userId == "" || brokerTypeStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required parameters: userId and brokerType"})
+		return
+	}
+
+	// Convert brokerType to integer
+	brokerType, err := strconv.Atoi(brokerTypeStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "brokerType must be a valid integer"})
+		return
+	}
+
+	// Access the "Portfolios" collection within the "Integrations" database
+	collection := mongoClient.Database("Integrations").Collection("Portfolios")
+
+	// Set up a context with a timeout for the MongoDB operation
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create the filter to match documents with the specified userId and brokerType in policy
+	filter := bson.M{
+		"userId":            userId,
+		"policy.brokerType": brokerType,
+	}
+
+	// Define a result holder
+	var portfolio bson.M
+	err = collection.FindOne(ctx, filter).Decode(&portfolio)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, gin.H{"error": "portfolio not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error retrieving portfolio"})
+		}
+		return
+	}
+
+	// Return the retrieved portfolio as JSON
 	c.JSON(http.StatusOK, portfolio)
 }

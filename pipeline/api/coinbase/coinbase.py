@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 # OAuth configuration from environment
 def get_config():
     return {
-        "CLIENT_ID": os.environ["COINBASE_CLIENT_ID"],
-        "CLIENT_SECRET": os.environ["COINBASE_CLIENT_SECRET"],
+        "CLIENT_ID": os.environ["COINBASE_OAUTH_CLIENT_ID"],
+        "CLIENT_SECRET": os.environ["COINBASE_OAUTH_SECRET"],
         "REDIRECT_URI": os.environ["COINBASE_REDIRECT_URI"],
         "AUTH_URL": "https://www.coinbase.com/oauth/authorize",
         "TOKEN_URL": "https://api.coinbase.com/oauth/token",

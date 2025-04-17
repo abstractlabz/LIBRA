@@ -36,8 +36,8 @@ func init() {
 	if err := godotenv.Load(".env"); err != nil {
 		log.Printf("Warning: Error loading .env file: %v", err)
 	}
-	clientID = os.Getenv("COINBASE_CLIENT_ID")
-	clientSecret = os.Getenv("COINBASE_CLIENT_SECRET")
+	clientID = os.Getenv("COINBASE_OAUTH_CLIENT_ID")
+	clientSecret = os.Getenv("COINBASE_OAUTH_SECRET")
 	redirectURI = os.Getenv("COINBASE_REDIRECT_URI")
 }
 
@@ -52,6 +52,7 @@ const (
 type Session struct {
 	AccessToken  string
 	RefreshToken string
+	UserParams   map[string]interface{}
 }
 
 // A simple in-memory session store with a mutex for thread safety.
@@ -117,6 +118,27 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 // indexHandler redirects the user to Coinbase's OAuth authorization URL.
 func indexHandler(w http.ResponseWriter, r *http.Request) {
+	// Get user parameters from URL query
+	requestBody := r.URL.Query().Get("requestBody")
+	var userParams map[string]interface{}
+	if requestBody != "" {
+		decodedBody, err := url.QueryUnescape(requestBody)
+		if err != nil {
+			log.Printf("Error decoding request body: %v", err)
+		} else {
+			if err := json.Unmarshal([]byte(decodedBody), &userParams); err != nil {
+				log.Printf("Error parsing user parameters: %v", err)
+			}
+		}
+	}
+
+	// Store user parameters in session
+	sessionID, sess := getSession(w, r)
+	sessionMutex.Lock()
+	sess.UserParams = userParams
+	sessionStore[sessionID] = sess
+	sessionMutex.Unlock()
+
 	scope := "wallet:accounts:read"
 	// Build the authorization URL with query parameters.
 	authURL, err := url.Parse(coinbaseAuthURL)
@@ -126,7 +148,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	params := url.Values{}
 	params.Add("client_id", clientID)
-	params.Add("redirect_uri", "https://coinbase.fineasapp.io:2083/callback") // Use explicit callback path
+	params.Add("redirect_uri", "https://base.fineasapp.io:2083/callback") // Use explicit callback path
 	params.Add("response_type", "code")
 	params.Add("scope", scope)
 	authURL.RawQuery = params.Encode()
@@ -346,6 +368,56 @@ func storeTokens(userID string, accessToken string, refreshToken string, expires
 	return nil
 }
 
+// fetchCryptoPrice fetches the current price of a cryptocurrency from Polygon.io
+func fetchCryptoPrice(symbol string) (float64, error) {
+	polygonAPIKey := os.Getenv("POLYGON_API_KEY")
+	if polygonAPIKey == "" {
+		return 0, fmt.Errorf("POLYGON_API_KEY not set")
+	}
+
+	// Format the symbol for Polygon.io (e.g., BTC -> X:BTCUSD)
+	formattedSymbol := fmt.Sprintf("X:%sUSD", symbol)
+
+	// Get the current date in YYYY-MM-DD format
+	currentDate := time.Now().Format("2006-01-02")
+
+	// Construct the URL for Polygon.io's crypto aggregates endpoint
+	url := fmt.Sprintf("https://api.polygon.io/v2/aggs/ticker/%s/range/1/day/%s/%s?apiKey=%s",
+		formattedSymbol, currentDate, currentDate, polygonAPIKey)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("error creating request: %v", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("error fetching price: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("error response from Polygon.io: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Results []struct {
+			C float64 `json:"c"` // Closing price
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if len(result.Results) == 0 {
+		return 0, fmt.Errorf("no price data available for %s", symbol)
+	}
+
+	return result.Results[0].C, nil
+}
+
 // Convert Coinbase holdings to portfolio format
 func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[string]interface{}) (*Portfolio, error) {
 	var coinbaseResp struct {
@@ -389,8 +461,15 @@ func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[stri
 				}
 			}
 
+			// Fetch current price from Polygon.io
+			currentPrice, err := fetchCryptoPrice(symbol)
+			if err != nil {
+				log.Printf("Warning: Failed to fetch price for %s: %v", symbol, err)
+				currentPrice = 1.0 // Fallback to 1.0 if price fetch fails
+			}
+
 			// Get cost basis from userParams or use current price
-			costBasis := 1.0
+			costBasis := currentPrice // Default to current price if no cost basis provided
 			if costBases, ok := userParams["costBasis"].(map[string]float64); ok {
 				if cb, exists := costBases[symbol]; exists {
 					costBasis = cb
@@ -398,14 +477,14 @@ func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[stri
 			}
 
 			startMarketValue := amount * costBasis
-			endMarketValue := amount // Using 1:1 for now, would need price data
+			endMarketValue := amount * currentPrice
 
 			holding := Holding{
 				Symbol:           symbol,
 				Name:             account.Name,
 				Quantity:         amount,
 				CostBasis:        costBasis,
-				CurrentPrice:     1, // Would need separate price API call
+				CurrentPrice:     currentPrice,
 				Currency:         "USD",
 				Category:         category,
 				Beta:             getUserParamFloat(userParams, "betas", 1.0),
@@ -648,10 +727,19 @@ func holdingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse user parameters from request
-	var userParams map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&userParams); err != nil {
-		userParams = make(map[string]interface{}) // Use defaults if no params provided
+	// Get user parameters from session
+	sessionMutex.Lock()
+	sess, exists := sessionStore[cookie.Value]
+	sessionMutex.Unlock()
+	if !exists {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	// Use user parameters from session
+	userParams := sess.UserParams
+	if userParams == nil {
+		userParams = make(map[string]interface{})
 	}
 
 	// Get holdings from Coinbase
@@ -827,7 +915,7 @@ func main() {
 
 	// Ensure required environment variables are set.
 	if clientID == "" || clientSecret == "" || redirectURI == "" {
-		log.Fatal("COINBASE_CLIENT_ID, COINBASE_CLIENT_SECRET, and COINBASE_REDIRECT_URI must be set")
+		log.Fatal("COINBASE_OAUTH_CLIENT_ID, COINBASE_OAUTH_SECRET, and COINBASE_REDIRECT_URI must be set")
 	}
 
 	// Set up HTTP handlers with CORS middleware
