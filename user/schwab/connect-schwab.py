@@ -594,7 +594,7 @@ def schwab_callback():
     - state: Optional state parameter for security
     
     Returns:
-        JSON response with success status and portfolio data
+        HTML page with success message and close button
     """
     try:
         # Get the authorization code
@@ -611,7 +611,6 @@ def schwab_callback():
         try:
             token_data = get_access_token(code=code)
             access_token = token_data["access_token"]
-            
             
             # Store the tokens
             store_tokens(
@@ -634,13 +633,83 @@ def schwab_callback():
             if os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
                 publish_to_kafka(portfolio_obj)
             
-            return jsonify({
-                "success": True,
-                "message": "Portfolio data retrieved successfully",
-                "portfolio_id": upload_result.get("id", ""),
-                "holdings_count": len(portfolio_obj["holdings"]),
-                "total_value": portfolio_obj.get("totalValue", 0)
-            })
+            # Return success HTML page
+            return '''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Schwab Connection Successful</title>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        background-color: #0a0b1e;
+                        color: #fff;
+                    }
+                    .container {
+                        text-align: center;
+                        padding: 2rem;
+                        background-color: #151633;
+                        border-radius: 12px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                        max-width: 400px;
+                    }
+                    .success-icon {
+                        width: 48px;
+                        height: 48px;
+                        margin: 0 auto 1rem auto;
+                    }
+                    .success-icon svg {
+                        width: 100%;
+                        height: 100%;
+                    }
+                    .success-icon svg path {
+                        fill: #a855f7;
+                    }
+                    h1 {
+                        color: #fff;
+                        margin-bottom: 1rem;
+                        font-weight: 500;
+                    }
+                    p {
+                        color: #a9a9c7;
+                        margin-bottom: 2rem;
+                        line-height: 1.5;
+                    }
+                    button {
+                        background-color: #a855f7;
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        transition: all 0.2s ease;
+                    }
+                    button:hover {
+                        background-color: #9333ea;
+                        transform: translateY(-1px);
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="success-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/>
+                        </svg>
+                    </div>
+                    <h1>Connection Successful!</h1>
+                    <p>Your Schwab account has been successfully connected. You can now close this window and return to the application.</p>
+                    <button onclick="window.close()">Close Window</button>
+                </div>
+            </body>
+            </html>
+            '''
             
         except Exception as e:
             logger.error(f"Failed to exchange code for token: {e}")

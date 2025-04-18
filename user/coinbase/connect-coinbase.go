@@ -213,10 +213,132 @@ func callbackHandler(w http.ResponseWriter, r *http.Request) {
 	err = storeTokens(sessionID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn)
 	if err != nil {
 		log.Printf("Warning: Failed to store tokens in MongoDB: %v", err)
-		// Continue anyway as session storage succeeded
 	}
 
-	http.Redirect(w, r, "/holdings", http.StatusFound)
+	// Get holdings data
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", coinbaseAccountsURL, nil)
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+
+	holdingsResp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Error fetching account holdings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer holdingsResp.Body.Close()
+
+	holdingsBody, err := ioutil.ReadAll(holdingsResp.Body)
+	if err != nil {
+		http.Error(w, "Error reading holdings response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert holdings to portfolio
+	portfolio, err := convertCoinbaseHoldingsToPortfolio(holdingsBody, sess.UserParams)
+	if err != nil {
+		http.Error(w, "Error converting holdings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Upload to MongoDB
+	portfolioID, err := uploadPortfolioToMongo(portfolio)
+	if err != nil {
+		log.Printf("Warning: Failed to upload to MongoDB: %v", err)
+	}
+
+	// Produce to Kafka
+	if err := produceToKafka(portfolio); err != nil {
+		log.Printf("Warning: Failed to produce to Kafka: %v", err)
+	}
+
+	// Return success HTML page
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `
+	<!DOCTYPE html>
+	<html>
+	<head>
+		<title>Coinbase Connection Successful</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				margin: 0;
+				background-color: #0a0b1e;
+				color: #fff;
+			}
+			.container {
+				text-align: center;
+				padding: 2rem;
+				background-color: #151633;
+				border-radius: 12px;
+				box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+				max-width: 400px;
+			}
+			.success-icon {
+				width: 48px;
+				height: 48px;
+				margin: 0 auto 1rem auto;
+			}
+			.success-icon svg {
+				width: 100%;
+				height: 100%;
+			}
+			.success-icon svg path {
+				fill: #a855f7;
+			}
+			h1 {
+				color: #fff;
+				margin-bottom: 1rem;
+				font-weight: 500;
+			}
+			p {
+				color: #a9a9c7;
+				margin-bottom: 2rem;
+				line-height: 1.5;
+			}
+			button {
+				background-color: #a855f7;
+				color: white;
+				border: none;
+				padding: 12px 24px;
+				border-radius: 8px;
+				cursor: pointer;
+				font-size: 16px;
+				transition: all 0.2s ease;
+			}
+			button:hover {
+				background-color: #9333ea;
+				transform: translateY(-1px);
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<div class="success-icon">
+				<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+					<path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/>
+				</svg>
+			</div>
+			<h1>Connection Successful!</h1>
+			<p>Your Coinbase account has been successfully connected. You can now close this window and return to the application.</p>
+			<button onclick="window.close()">Close Window</button>
+		</div>
+		<script>
+			// Notify parent window of successful connection
+			if (window.opener) {
+				window.opener.postMessage({ type: 'COINBASE_CONNECTION_SUCCESS', portfolioId: '`+portfolioID.Hex()+`' }, '*');
+			}
+		</script>
+	</body>
+	</html>
+	`)
 }
 
 // Portfolio struct and related types (copied from models package)
@@ -468,15 +590,15 @@ func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[stri
 				currentPrice = 1.0 // Fallback to 1.0 if price fetch fails
 			}
 
-			// Get cost basis from userParams or use current price
-			costBasis := currentPrice // Default to current price if no cost basis provided
+			// Get cost basis from userParams or use current price * amount
+			costBasis := currentPrice * amount // Default to current price * amount if no cost basis provided
 			if costBases, ok := userParams["costBasis"].(map[string]float64); ok {
 				if cb, exists := costBases[symbol]; exists {
 					costBasis = cb
 				}
 			}
 
-			startMarketValue := amount * costBasis
+			startMarketValue := costBasis
 			endMarketValue := amount * currentPrice
 
 			holding := Holding{
@@ -601,27 +723,25 @@ func uploadPortfolioToMongo(portfolio *Portfolio) (primitive.ObjectID, error) {
 
 	collection := client.Database("Integrations").Collection("Portfolios")
 
-	// Check for existing portfolio
+	// First, delete any existing portfolios for this user and broker type
 	filter := bson.M{
 		"userId":            portfolio.UserID,
 		"policy.brokerType": portfolio.Policy.BrokerType,
 	}
 
-	result, err := collection.ReplaceOne(
-		ctx,
-		filter,
-		portfolio,
-		options.Replace().SetUpsert(true),
-	)
-
+	_, err = collection.DeleteMany(ctx, filter)
 	if err != nil {
-		return primitive.NilObjectID, err
+		return primitive.NilObjectID, fmt.Errorf("failed to delete existing portfolios: %v", err)
 	}
 
-	if result.UpsertedID != nil {
-		if oid, ok := result.UpsertedID.(primitive.ObjectID); ok {
-			return oid, nil
-		}
+	// Then insert the new portfolio
+	result, err := collection.InsertOne(ctx, portfolio)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to insert portfolio: %v", err)
+	}
+
+	if oid, ok := result.InsertedID.(primitive.ObjectID); ok {
+		return oid, nil
 	}
 
 	return primitive.NilObjectID, nil
