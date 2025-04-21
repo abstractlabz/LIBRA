@@ -68,7 +68,7 @@ type Portfolio struct {
 type Holding struct {
 	Symbol       string  `json:"symbol"`
 	Name         string  `json:"name"`
-	Quantity     int     `json:"quantity"`
+	Quantity     float64 `json:"quantity"`
 	CostBasis    float64 `json:"costBasis"`
 	CurrentPrice float64 `json:"currentPrice"`
 	Currency     string  `json:"currency"`

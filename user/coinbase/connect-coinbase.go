@@ -165,6 +165,14 @@ func callbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get session and user parameters
+	sessionID, sess := getSession(w, r)
+	userID := getUserParamString(sess.UserParams, "userId", "")
+	if userID == "" {
+		http.Error(w, "No user ID found in session parameters", http.StatusBadRequest)
+		return
+	}
+
 	// Prepare the POST form data to exchange the code for a token.
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
@@ -202,15 +210,14 @@ func callbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save the tokens in the session
-	sessionID, sess := getSession(w, r)
 	sessionMutex.Lock()
 	sess.AccessToken = tokenResp.AccessToken
 	sess.RefreshToken = tokenResp.RefreshToken
 	sessionStore[sessionID] = sess
 	sessionMutex.Unlock()
 
-	// Store tokens in MongoDB
-	err = storeTokens(sessionID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn)
+	// Store tokens in MongoDB using the actual user ID instead of session ID
+	err = storeTokens(userID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn)
 	if err != nil {
 		log.Printf("Warning: Failed to store tokens in MongoDB: %v", err)
 	}
@@ -400,6 +407,7 @@ type TargetHolding struct {
 // Add these new types after your existing type declarations
 type TokenDocument struct {
 	UserID       string    `bson:"user_id"`
+	SessionID    string    `bson:"session_id"`
 	AccessToken  string    `bson:"access_token"`
 	RefreshToken string    `bson:"refresh_token"`
 	ExpiryTime   time.Time `bson:"expiry_time"`
@@ -471,14 +479,28 @@ func storeTokens(userID string, accessToken string, refreshToken string, expires
 
 	collection := client.Database("Integrations").Collection("CoinbaseTokens")
 
+	// Get the current session ID from the session store
+	var sessionID string
+	sessionMutex.Lock()
+	for id, sess := range sessionStore {
+		if sess.UserParams != nil {
+			if uid, ok := sess.UserParams["userId"].(string); ok && uid == userID {
+				sessionID = id
+				break
+			}
+		}
+	}
+	sessionMutex.Unlock()
+
 	tokenDoc := TokenDocument{
 		UserID:       userID,
+		SessionID:    sessionID,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiryTime:   time.Now().Add(time.Duration(expiresIn) * time.Second),
 	}
 
-	filter := bson.M{"userId": userID}
+	filter := bson.M{"user_id": userID}
 	update := bson.M{"$set": tokenDoc}
 	opts := options.Update().SetUpsert(true)
 
@@ -561,6 +583,12 @@ func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[stri
 	totalInvestment := 0.0
 	currentTime := time.Now().UTC()
 
+	// Use the user ID directly without hashing again
+	userID := getUserParamString(userParams, "userId", "")
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+
 	for _, account := range coinbaseResp.Data {
 		amount, err := strconv.ParseFloat(account.Balance.Amount, 64)
 		if err != nil {
@@ -633,7 +661,7 @@ func convertCoinbaseHoldingsToPortfolio(holdingsData []byte, userParams map[stri
 	}
 
 	portfolio := &Portfolio{
-		UserID:          getUserParamString(userParams, "userId", ""),
+		UserID:          userID,
 		Name:            getUserParamString(userParams, "name", "Coinbase Portfolio"),
 		Holdings:        holdings,
 		TotalValue:      totalValue,
@@ -721,30 +749,71 @@ func uploadPortfolioToMongo(portfolio *Portfolio) (primitive.ObjectID, error) {
 	}
 	defer client.Disconnect(ctx)
 
-	collection := client.Database("Integrations").Collection("Portfolios")
-
-	// First, delete any existing portfolios for this user and broker type
-	filter := bson.M{
-		"userId":            portfolio.UserID,
-		"policy.brokerType": portfolio.Policy.BrokerType,
-	}
-
-	_, err = collection.DeleteMany(ctx, filter)
+	// Start a session
+	session, err := client.StartSession()
 	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("failed to delete existing portfolios: %v", err)
+		return primitive.NilObjectID, fmt.Errorf("failed to start session: %v", err)
 	}
+	defer session.EndSession(ctx)
 
-	// Then insert the new portfolio
-	result, err := collection.InsertOne(ctx, portfolio)
+	// Start a transaction
+	var insertedID primitive.ObjectID
+	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+		portfoliosCollection := client.Database("Integrations").Collection("Portfolios")
+		userCollection := client.Database("User").Collection("UserInformation")
+
+		// Find existing portfolio
+		filter := bson.M{
+			"userId":            portfolio.UserID,
+			"policy.brokerType": portfolio.Policy.BrokerType,
+		}
+
+		var existingPortfolio Portfolio
+		err := portfoliosCollection.FindOne(sessCtx, filter).Decode(&existingPortfolio)
+		if err != nil && err != mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("failed to check for existing portfolio: %v", err)
+		}
+
+		if err == mongo.ErrNoDocuments {
+			// Insert new portfolio
+			result, err := portfoliosCollection.InsertOne(sessCtx, portfolio)
+			if err != nil {
+				return nil, fmt.Errorf("failed to insert portfolio: %v", err)
+			}
+			if oid, ok := result.InsertedID.(primitive.ObjectID); ok {
+				insertedID = oid
+			}
+		} else {
+			// Update existing portfolio
+			portfolio.ID = existingPortfolio.ID // Preserve the original ID
+			_, err = portfoliosCollection.ReplaceOne(sessCtx, filter, portfolio)
+			if err != nil {
+				return nil, fmt.Errorf("failed to update portfolio: %v", err)
+			}
+			insertedID = existingPortfolio.ID
+		}
+
+		// Update UserInformation collection
+		userFilter := bson.M{"_id_hash": portfolio.UserID}
+		update := bson.M{
+			"$addToSet": bson.M{
+				"portfolio_ids": insertedID.Hex(),
+			},
+		}
+
+		_, err = userCollection.UpdateOne(sessCtx, userFilter, update)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update user portfolio IDs: %v", err)
+		}
+
+		return nil, nil
+	})
+
 	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("failed to insert portfolio: %v", err)
+		return primitive.NilObjectID, err
 	}
 
-	if oid, ok := result.InsertedID.(primitive.ObjectID); ok {
-		return oid, nil
-	}
-
-	return primitive.NilObjectID, nil
+	return insertedID, nil
 }
 
 // Produce portfolio to Kafka
@@ -821,15 +890,28 @@ func holdingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to get tokens from MongoDB first
-	tokenDoc, err := getStoredTokens(cookie.Value)
+	// Get session and user parameters
+	sessionMutex.Lock()
+	sess, exists := sessionStore[cookie.Value]
+	sessionMutex.Unlock()
+	if !exists {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	// Get user ID from session parameters
+	userID := getUserParamString(sess.UserParams, "userId", "")
+	if userID == "" {
+		http.Error(w, "No user ID found in session parameters", http.StatusBadRequest)
+		return
+	}
+
+	// Try to get tokens from MongoDB first using the actual user ID
+	tokenDoc, err := getStoredTokens(userID)
 	if err != nil {
 		log.Printf("Error retrieving stored tokens: %v", err)
 		// Fall back to session tokens
-		sessionMutex.Lock()
-		sess, exists := sessionStore[cookie.Value]
-		sessionMutex.Unlock()
-		if !exists || sess.AccessToken == "" {
+		if sess.AccessToken == "" {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -849,7 +931,7 @@ func holdingsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Get user parameters from session
 	sessionMutex.Lock()
-	sess, exists := sessionStore[cookie.Value]
+	sess, exists = sessionStore[cookie.Value]
 	sessionMutex.Unlock()
 	if !exists {
 		http.Redirect(w, r, "/", http.StatusFound)

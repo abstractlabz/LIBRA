@@ -395,7 +395,7 @@ def encrypt_password(password):
 
 def uploadPortfolioToMongo(portfolio_obj):
     """
-    Upload the portfolio object to MongoDB.
+    Upload the portfolio object to MongoDB using transactions for atomic operations.
     """
     try:
         # Connect to MongoDB
@@ -407,27 +407,33 @@ def uploadPortfolioToMongo(portfolio_obj):
         
         # Extract identifying fields from the portfolio object
         user_id = portfolio_obj.get("userId", "")
-        broker_type = portfolio_obj.get("policy", {}).get("brokerType")  # Now directly an integer
+        broker_type = portfolio_obj.get("policy", {}).get("brokerType")
         
-        # Check if document with same user ID and broker type already exists
-        existing_doc = collection.find_one({
-            "userId": user_id,
-            "policy.brokerType": broker_type  # Updated query to match direct integer
-        })
-        
-        if existing_doc:
-            # Update existing document
-            result = collection.replace_one(
-                {"_id": existing_doc["_id"]},
-                portfolio_obj
-            )
-            logger.info(f"Portfolio updated in MongoDB with ID: {existing_doc['_id']}")
-            return {"success": True, "message": "Portfolio successfully updated", "id": str(existing_doc["_id"])}
-        else:
-            # Insert new portfolio
-            result = collection.insert_one(portfolio_obj)
-            logger.info("Portfolio successfully uploaded to MongoDB with ID: %s", result.inserted_id)
-            return {"success": True, "message": "Portfolio successfully uploaded", "id": str(result.inserted_id)}
+        # Start a session for the transaction
+        with client.start_session() as session:
+            with session.start_transaction():
+                # Check if document with same user ID and broker type already exists
+                existing_doc = collection.find_one({
+                    "userId": user_id,
+                    "policy.brokerType": broker_type
+                }, session=session)
+                
+                if existing_doc:
+                    # Preserve the original _id
+                    portfolio_obj["_id"] = existing_doc["_id"]
+                    # Update existing document
+                    result = collection.replace_one(
+                        {"_id": existing_doc["_id"]},
+                        portfolio_obj,
+                        session=session
+                    )
+                    logger.info(f"Portfolio updated in MongoDB with ID: {existing_doc['_id']}")
+                    return {"success": True, "message": "Portfolio successfully updated", "id": str(existing_doc["_id"])}
+                else:
+                    # Insert new portfolio
+                    result = collection.insert_one(portfolio_obj, session=session)
+                    logger.info("Portfolio successfully uploaded to MongoDB with ID: %s", result.inserted_id)
+                    return {"success": True, "message": "Portfolio successfully uploaded", "id": str(result.inserted_id)}
         
     except Exception as e:
         logger.exception("Failed to upload portfolio to MongoDB: %s", e)

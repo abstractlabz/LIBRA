@@ -116,13 +116,52 @@ def get_account_positions(access_token):
     
     return response.json()
 
+def fetch_crypto_price(symbol):
+    """Fetch current price of a cryptocurrency from Polygon.io"""
+    polygon_api_key = os.getenv("POLYGON_API_KEY")
+    if not polygon_api_key:
+        logger.error("POLYGON_API_KEY not set")
+        return 1.0  # Default fallback price
+        
+    # Format symbol for Polygon.io (e.g., BTC -> X:BTCUSD)
+    formatted_symbol = f"X:{symbol}USD"
+    
+    # Get current date in YYYY-MM-DD format
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Construct Polygon.io API URL
+    url = f"https://api.polygon.io/v2/aggs/ticker/{formatted_symbol}/range/1/day/{current_date}/{current_date}?apiKey={polygon_api_key}"
+    
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            logger.error(f"Error response from Polygon.io: {response.status_code}")
+            return 1.0
+            
+        data = response.json()
+        if not data.get("results"):
+            logger.error(f"No price data available for {symbol}")
+            return 1.0
+            
+        return data["results"][0]["c"]  # Return closing price
+    except Exception as e:
+        logger.error(f"Error fetching price for {symbol}: {e}")
+        return 1.0  # Default fallback price
+
 def convert_coinbase_positions_to_portfolio(coinbase_data, user_params):
     """Convert Coinbase positions data to our portfolio format with enhanced fields"""
     holdings = []
+    total_value = 0
+    total_investment = 0
     current_time = datetime.utcnow()
     formatted_time = current_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     try:
+        # Use the user ID directly from parameters without hashing
+        user_id = user_params.get("userId", "")
+        if not user_id:
+            raise ValueError("User ID is required")
+            
         for account in coinbase_data["data"]:
             amount = float(account["balance"]["amount"])
             if amount > 0:
@@ -136,11 +175,16 @@ def convert_coinbase_positions_to_portfolio(coinbase_data, user_params):
                         category = cat
                         break
 
+                # Fetch current price from Polygon.io
+                current_price = fetch_crypto_price(symbol)
+                
+                # Get cost basis from user_params or use current price
+                cost_basis = user_params.get("costBasis", {}).get(symbol, current_price * amount)
+                
                 # Calculate market values
-                current_price = 1  # Would need separate price API call
                 market_value = amount * current_price
-                cost_basis = user_params.get("costBasis", {}).get(symbol, current_price)
-                start_market_value = amount * cost_basis
+                start_market_value = cost_basis
+                end_market_value = market_value
 
                 holding = {
                     "symbol": symbol,
@@ -154,17 +198,15 @@ def convert_coinbase_positions_to_portfolio(coinbase_data, user_params):
                     "category": category,
                     "beta": user_params.get("betas", {}).get(symbol, 1.0),
                     "startMarketValue": start_market_value,
-                    "endMarketValue": market_value,
+                    "endMarketValue": end_market_value,
                     "rebalancedShares": amount,  # Initial value same as current
                     "rebalanceCash": 0.0,  # Will be calculated during rebalancing
                     "valueDifference": market_value - start_market_value,
                     "targetWeight": 0.0  # Will be set during optimization
                 }
                 holdings.append(holding)
-
-        # Calculate total portfolio values
-        total_value = sum(holding.get("value", 0) for holding in holdings)
-        total_investment = sum(holding.get("startMarketValue", 0) for holding in holdings)
+                total_value += market_value
+                total_investment += start_market_value
 
         # Initialize performance metrics
         performance_metrics = {
@@ -174,9 +216,6 @@ def convert_coinbase_positions_to_portfolio(coinbase_data, user_params):
             "underperformers": [],
             "zScores": {}
         }
-
-        # Hash user_id from user_params
-        user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
 
         portfolio_obj = {
             "userId": user_id,
@@ -201,8 +240,8 @@ def userParamsToUserPolicy(user_params):
     """
     Convert user parameters to an enhanced user policy for Coinbase.
     """
-    # Extract values with defaults
-    user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
+    # Use the user ID directly from parameters without hashing
+    user_id = user_params.get("userId", "")
     portfolio_name = user_params.get("name", "Coinbase Portfolio")
     
     # Policy-specific parameters with defaults
