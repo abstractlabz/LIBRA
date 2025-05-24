@@ -418,9 +418,11 @@ def uploadPortfolioToMongo(portfolio_obj):
                     "policy.brokerType": broker_type
                 }, session=session)
                 
+                portfolio_id = None
                 if existing_doc:
                     # Preserve the original _id
                     portfolio_obj["_id"] = existing_doc["_id"]
+                    portfolio_id = existing_doc["_id"]
                     # Update existing document
                     result = collection.replace_one(
                         {"_id": existing_doc["_id"]},
@@ -428,12 +430,24 @@ def uploadPortfolioToMongo(portfolio_obj):
                         session=session
                     )
                     logger.info(f"Portfolio updated in MongoDB with ID: {existing_doc['_id']}")
-                    return {"success": True, "message": "Portfolio successfully updated", "id": str(existing_doc["_id"])}
                 else:
                     # Insert new portfolio
                     result = collection.insert_one(portfolio_obj, session=session)
+                    portfolio_id = result.inserted_id
                     logger.info("Portfolio successfully uploaded to MongoDB with ID: %s", result.inserted_id)
-                    return {"success": True, "message": "Portfolio successfully uploaded", "id": str(result.inserted_id)}
+
+                # Update UserInformation collection
+                user_collection = client["User"]["UserInformation"]
+                user_filter = {"id_hash": user_id}
+                update = {
+                    "$addToSet": {
+                        "portfolio_ids": str(portfolio_id)
+                    }
+                }
+                user_result = user_collection.update_one(user_filter, update, session=session)
+                logger.info(f"Updated UserInformation collection for user {user_id} with portfolio ID {portfolio_id}")
+
+                return {"success": True, "message": "Portfolio successfully uploaded", "id": str(portfolio_id)}
         
     except Exception as e:
         logger.exception("Failed to upload portfolio to MongoDB: %s", e)
