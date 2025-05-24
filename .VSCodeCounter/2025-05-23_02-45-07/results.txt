@@ -1,0 +1,69 @@
+Date : 2025-05-23 02:45:07
+Directory : c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA
+Total : 22 files,  4985 codes, 587 comments, 937 blanks, all 6509 lines
+
+Languages
++------------------+------------+------------+------------+------------+------------+
+| language         | files      | code       | comment    | blank      | total      |
++------------------+------------+------------+------------+------------+------------+
+| Go               |         12 |      2,438 |        317 |        451 |      3,206 |
+| Python           |          5 |      2,255 |        245 |        454 |      2,954 |
+| Go Checksum File |          1 |        168 |          0 |          1 |        169 |
+| Go Module File   |          1 |         49 |          0 |          4 |         53 |
+| Shell Script     |          1 |         41 |         10 |         12 |         63 |
+| Docker           |          1 |         27 |         15 |         15 |         57 |
+| pip requirements |          1 |          7 |          0 |          0 |          7 |
++------------------+------------+------------+------------+------------+------------+
+
+Directories
++-----------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                | files      | code       | comment    | blank      | total      |
++-----------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                   |         22 |      4,985 |        587 |        937 |      6,509 |
+| . (Files)                                                                                           |          5 |        292 |         25 |         32 |        349 |
+| LIBRA                                                                                               |          1 |        163 |         11 |         19 |        193 |
+| LIBRA\models                                                                                        |          1 |        163 |         11 |         19 |        193 |
+| algo                                                                                                |          3 |      1,074 |        152 |        238 |      1,464 |
+| models                                                                                              |          1 |        163 |         11 |         19 |        193 |
+| pipeline                                                                                            |          5 |      1,352 |        148 |        277 |      1,777 |
+| pipeline (Files)                                                                                    |          1 |        170 |         40 |         35 |        245 |
+| pipeline\api                                                                                        |          4 |      1,182 |        108 |        242 |      1,532 |
+| pipeline\api\coinbase                                                                               |          1 |        348 |         19 |         68 |        435 |
+| pipeline\api\llm                                                                                    |          1 |        222 |         16 |         47 |        285 |
+| pipeline\api\normalize                                                                              |          1 |        148 |         31 |         26 |        205 |
+| pipeline\api\schwab                                                                                 |          1 |        464 |         42 |        101 |        607 |
+| user                                                                                                |          3 |      1,686 |        199 |        292 |      2,177 |
+| user\coinbase                                                                                       |          1 |        905 |         86 |        141 |      1,132 |
+| user\schwab                                                                                         |          1 |        607 |         63 |        106 |        776 |
+| user\utils                                                                                          |          1 |        174 |         50 |         45 |        269 |
+| utils                                                                                               |          4 |        255 |         41 |         60 |        356 |
++-----------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-----------------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| filename                                                                                            | language         | code       | comment    | blank      | total      |
++-----------------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\Dockerfile                              | Docker           |         27 |         15 |         15 |         57 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\LIBRA\models\portfolio.go               | Go               |        163 |         11 |         19 |        193 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\MAB.py                             | Python           |        177 |         19 |         31 |        227 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\fineasstockpicker.py               | Python           |        659 |        102 |        148 |        909 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\rebalancer.go                      | Go               |        238 |         31 |         59 |        328 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\go.mod                                  | Go Module File   |         49 |          0 |          4 |         53 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\go.sum                                  | Go Checksum File |        168 |          0 |          1 |        169 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\models\portfolio.go                     | Go               |        163 |         11 |         19 |        193 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\coinbase\coinbase.py       | Python           |        348 |         19 |         68 |        435 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\llm\inferencer.go          | Go               |        222 |         16 |         47 |        285 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\normalize\normalization.go | Go               |        148 |         31 |         26 |        205 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\schwab\schwab.py           | Python           |        464 |         42 |        101 |        607 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\taskmanager.go                 | Go               |        170 |         40 |         35 |        245 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\requirements.txt                        | pip requirements |          7 |          0 |          0 |          7 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\startup.sh                              | Shell Script     |         41 |         10 |         12 |         63 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\coinbase\connect-coinbase.go       | Go               |        905 |         86 |        141 |      1,132 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\schwab\connect-schwab.py           | Python           |        607 |         63 |        106 |        776 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\utils\get-portfolio.go             | Go               |        174 |         50 |         45 |        269 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\mongo.go                          | Go               |         66 |          8 |         16 |         90 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\producer.go                       | Go               |         89 |         17 |         21 |        127 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\reader.go                         | Go               |         52 |          8 |         13 |         73 |
+| c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\worker_pool.go                    | Go               |         48 |          8 |         10 |         66 |
+| Total                                                                                               |                  |      4,985 |        587 |        937 |      6,509 |
++-----------------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+

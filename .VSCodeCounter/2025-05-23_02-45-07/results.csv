@@ -1,0 +1,24 @@
+"filename", "language", "pip requirements", "Go", "Docker", "Go Checksum File", "Shell Script", "Go Module File", "Python", "comment", "blank", "total"
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\Dockerfile", "Docker", 0, 0, 27, 0, 0, 0, 0, 15, 15, 57
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\LIBRA\models\portfolio.go", "Go", 0, 163, 0, 0, 0, 0, 0, 11, 19, 193
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\MAB.py", "Python", 0, 0, 0, 0, 0, 0, 177, 19, 31, 227
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\fineasstockpicker.py", "Python", 0, 0, 0, 0, 0, 0, 659, 102, 148, 909
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\algo\rebalancer.go", "Go", 0, 238, 0, 0, 0, 0, 0, 31, 59, 328
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\go.mod", "Go Module File", 0, 0, 0, 0, 0, 49, 0, 0, 4, 53
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\go.sum", "Go Checksum File", 0, 0, 0, 168, 0, 0, 0, 0, 1, 169
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\models\portfolio.go", "Go", 0, 163, 0, 0, 0, 0, 0, 11, 19, 193
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\coinbase\coinbase.py", "Python", 0, 0, 0, 0, 0, 0, 348, 19, 68, 435
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\llm\inferencer.go", "Go", 0, 222, 0, 0, 0, 0, 0, 16, 47, 285
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\normalize\normalization.go", "Go", 0, 148, 0, 0, 0, 0, 0, 31, 26, 205
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\api\schwab\schwab.py", "Python", 0, 0, 0, 0, 0, 0, 464, 42, 101, 607
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\pipeline\taskmanager.go", "Go", 0, 170, 0, 0, 0, 0, 0, 40, 35, 245
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\requirements.txt", "pip requirements", 7, 0, 0, 0, 0, 0, 0, 0, 0, 7
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\startup.sh", "Shell Script", 0, 0, 0, 0, 41, 0, 0, 10, 12, 63
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\coinbase\connect-coinbase.go", "Go", 0, 905, 0, 0, 0, 0, 0, 86, 141, 1132
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\schwab\connect-schwab.py", "Python", 0, 0, 0, 0, 0, 0, 607, 63, 106, 776
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\user\utils\get-portfolio.go", "Go", 0, 174, 0, 0, 0, 0, 0, 50, 45, 269
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\mongo.go", "Go", 0, 66, 0, 0, 0, 0, 0, 8, 16, 90
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\producer.go", "Go", 0, 89, 0, 0, 0, 0, 0, 17, 21, 127
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\reader.go", "Go", 0, 52, 0, 0, 0, 0, 0, 8, 13, 73
+"c:\Users\paako\OneDrive\CompSci\Code\Current Projects\LIBRA\utils\worker_pool.go", "Go", 0, 48, 0, 0, 0, 0, 0, 8, 10, 66
+"Total", "-", 7, 2438, 27, 168, 41, 49, 2255, 587, 937, 6509

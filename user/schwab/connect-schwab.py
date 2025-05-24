@@ -279,7 +279,7 @@ def convert_schwab_positions_to_portfolio(schwab_data, user_params):
                             holdings.append(holding)
 
         # Hash user_id from user_params
-        user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
+        user_id = user_params.get("userId", "")
 
         # Calculate total portfolio value
         total_value = sum(holding.get("value", 0) for holding in holdings)
@@ -318,7 +318,7 @@ def userParamsToUserPolicy(user_params):
     Convert user parameters to an enhanced user policy.
     """
     # Extract values with defaults
-    user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
+    #user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
     portfolio_name = user_params.get("name", "Schwab Portfolio")
     
     # Policy-specific parameters with defaults
@@ -501,7 +501,7 @@ def connect_schwab():
             user_params["userId"] = id_hash
             
         # Hash the user_id from user_params for storage
-        user_id = hashlib.sha256(user_params.get("userId", "").encode('utf-8')).hexdigest()
+        user_id = user_params.get("userId", "")
         logger.info(f"Processing request for user ID: {user_id}")
         
         # Try to get stored tokens for this specific user
